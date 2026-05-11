@@ -1,0 +1,256 @@
+{% extends "base.html" %}
+{% block page_title %}DISPARO WHATSAPP  /  Disparo de Mensagens{% endblock %}
+
+{% block content %}
+<div class="two-col">
+
+  <div class="panel left-panel">
+    <div class="sec-header wz" style="margin-top:4px">EVOLUTION API</div>
+    <label>URL base<input id="cfg-url" type="text" value="{{ wz_base_url }}" placeholder="https://api.seuservidor.com"></label>
+    <label style="position:relative">
+      API Key
+      <input id="cfg-key" type="text" value="429683C4C977415CAAFCCE10F7D57E11" readonly
+             style="background:rgba(37,211,102,0.06);border-color:rgba(37,211,102,0.3);color:var(--wz);font-family:var(--mono);font-size:10px;cursor:default">
+      <span style="position:absolute;right:10px;top:30px;font-size:9px;color:var(--muted);font-family:var(--mono)">FIXO</span>
+    </label>
+    <label>Instância<input id="cfg-inst" type="text" value="{{ wz_instance }}" placeholder="minha-instancia"></label>
+    <button class="btn-ghost wz mt-4" onclick="testConn()">Testar Conexão</button>
+
+    <div class="sec-header wz">INTERVALO ENTRE CONTATOS</div>
+    <p class="hint">Delay entre um contato e o próximo. Mínimo recomendado: 40s.</p>
+    <div class="interval-row">
+      <label style="flex:1">
+        Mínimo (s)
+        <input id="cfg-imin" type="number" value="40" min="20" placeholder="40">
+      </label>
+      <label style="flex:1">
+        Máximo (s)
+        <input id="cfg-imax" type="number" value="120" min="40" placeholder="120">
+      </label>
+    </div>
+    <p id="wz-eta-hint" class="hint" style="margin-top:4px">— s de espera média entre contatos</p>
+
+    <div class="sec-header wz">ARQUIVO EXCEL</div>
+    <p class="hint">Colunas: NOME e TELEFONE (ou WHATSAPP)</p>
+    <div class="file-row">
+      <input id="cfg-excel" type="text" placeholder="Caminho do arquivo .xlsx">
+      <label class="btn-file">···<input type="file" accept=".xlsx,.xls" onchange="document.getElementById('cfg-excel').value=this.files[0]?.name||''"></label>
+    </div>
+
+    <div class="sec-header wz">FLUXO AUTOMÁTICO</div>
+    <p class="hint" style="line-height:1.6">
+      <strong style="color:var(--wz)">1ª msg</strong> — Saudação rotativa (ex: "Boa tarde", "Olá, tudo bem?")<br>
+      <strong style="color:var(--wz)">20–45s</strong> — Delay aleatório<br>
+      <strong style="color:var(--wz)">2ª msg</strong> — Validação: "Falo com a <em>{empresa}</em>?"<br>
+      <strong style="color:var(--wz)">Pausa</strong> — A cada 15–30 contatos: 5–20 min de descanso
+    </p>
+
+    <div class="sec-header wz" style="margin-top:10px">MENSAGEM ADICIONAL <span style="font-weight:400;color:var(--muted)">(opcional)</span></div>
+    <p class="hint">Enviada como 3ª mensagem. Deixe em branco para usar apenas o fluxo automático.<br>Variáveis: {nome} e {empresa}</p>
+    <textarea id="cfg-msg" rows="5" placeholder="Deixe em branco para usar apenas saudação + validação automática..."></textarea>
+    <span id="char-count" class="hint" style="text-align:right;display:block">0 caracteres</span>
+  </div>
+
+  <div class="panel right-panel">
+    <div class="console-header">
+      <span class="console-title wz">DASHBOARD  —  WHATSAPP</span>
+      <button class="btn-ghost small" onclick="clearLog('wz-log')">Limpar</button>
+    </div>
+    <div class="metrics-row">
+      <div class="metric-card"><div id="m-total"   class="metric-val muted">0</div><div class="metric-lbl">TOTAL</div></div>
+      <div class="metric-card"><div id="m-sent"    class="metric-val wz">0</div><div class="metric-lbl">ENVIADOS</div></div>
+      <div class="metric-card"><div id="m-failed"  class="metric-val red">0</div><div class="metric-lbl">FALHAS</div></div>
+      <div class="metric-card"><div id="m-pending" class="metric-val amber">0</div><div class="metric-lbl">PENDENTES</div></div>
+    </div>
+    <div class="progress-row">
+      <div class="progress-bar"><div id="wz-progress" class="progress-fill wz" style="width:0%"></div></div>
+      <span id="wz-pct" class="pct-label">0%</span>
+    </div>
+    <div class="countdown-row">
+      <span class="muted small">⏱ Próximo envio em</span>
+      <span id="wz-countdown" class="countdown">--:--</span>
+    </div>
+    <pre id="wz-log" class="console-log"></pre>
+    <div class="footer-btns">
+      <button id="btn-start" class="btn-primary wz"  onclick="wzStart()">▶  Iniciar Disparo</button>
+      <button id="btn-pause" class="btn-ghost amber"  onclick="wzPause()" disabled>⏸  Pausar</button>
+      <button id="btn-stop"  class="btn-ghost red"    onclick="wzStop()"  disabled>■  Parar</button>
+      <span id="wz-counter" class="counter-label">0 / 0 enviados</span>
+    </div>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let wzStream = null;
+let wzPaused = false;
+let wzState  = 'idle'; // idle | running | stopped
+
+// Reconecta ao disparo em andamento ao abrir a aba
+document.addEventListener('DOMContentLoaded', () => {
+  fetch('/whatsapp/status')
+    .then(r => r.json())
+    .then(d => {
+      if (d.running && d.stream_id) {
+        appendLog('wz-log', 'Disparo em andamento — reconectando ao log...', 'WARNING');
+        wzSetBtns('running');
+        setStatus('WZ EXECUTANDO', 'wz');
+        startWzSSE(d.stream_id);
+      }
+    });
+});
+
+document.getElementById('cfg-msg').addEventListener('input', function() {
+  document.getElementById('char-count').textContent = this.value.length + ' caracteres';
+});
+
+function updateWzEta() {
+  const mn  = parseInt(document.getElementById('cfg-imin').value) || 0;
+  const mx  = parseInt(document.getElementById('cfg-imax').value) || 0;
+  const avg = mn === 0 && mx === 0 ? 0 : Math.round((mn + mx) / 2);
+  const hint = document.getElementById('wz-eta-hint');
+  if (avg === 0) {
+    hint.textContent = 'Sem intervalo — disparo contínuo';
+  } else {
+    const per100m = Math.floor(avg * 100 / 60);
+    hint.textContent = `~${avg}s de média entre envios · 100 msgs ≈ ${per100m} min`;
+  }
+}
+document.getElementById('cfg-imin').addEventListener('input', updateWzEta);
+document.getElementById('cfg-imax').addEventListener('input', updateWzEta);
+updateWzEta();
+
+function testConn() {
+  const d = {
+    base_url: document.getElementById('cfg-url').value.trim(),
+    api_key:  document.getElementById('cfg-key').value.trim(),
+    instance: document.getElementById('cfg-inst').value.trim(),
+  };
+  fetch('/whatsapp/test-connection', {
+    method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(d),
+  }).then(r => r.json()).then(data => {
+    if (data.error) appendLog('wz-log', 'Erro: ' + data.error, 'ERROR');
+    else appendLog('wz-log', `Instância: ${data.state.toUpperCase()}`, data.state === 'open' ? 'SUCCESS' : 'WARNING');
+  });
+}
+
+function wzStart() {
+  const cfg = {
+    base_url:     document.getElementById('cfg-url').value.trim(),
+    api_key:      document.getElementById('cfg-key').value.trim(),
+    instance:     document.getElementById('cfg-inst').value.trim(),
+    excel_path:   document.getElementById('cfg-excel').value.trim(),
+    message:      document.getElementById('cfg-msg').value.trim(),
+    interval_min: parseInt(document.getElementById('cfg-imin').value) || 0,
+    interval_max: parseInt(document.getElementById('cfg-imax').value) || 0,
+  };
+  if (!cfg.base_url || !cfg.api_key || !cfg.instance) return alert('Preencha URL, API Key e Instância.');
+
+  fetch('/whatsapp/start', {
+    method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(cfg),
+  }).then(r => r.json()).then(data => {
+    if (data.error) return alert(data.error);
+    wzSetBtns('running');
+    setStatus('WZ EXECUTANDO', 'wz');
+    startWzSSE(data.stream_id);
+  });
+}
+
+function startWzSSE(streamId) {
+  if (wzStream) wzStream.close();
+  wzStream = new EventSource(`/whatsapp/stream/${streamId}`);
+
+  wzStream.addEventListener('log', e => {
+    const d = JSON.parse(e.data); appendLog('wz-log', d.msg, d.level);
+  });
+  wzStream.addEventListener('stats', e => {
+    const s = JSON.parse(e.data);
+    document.getElementById('m-total').textContent   = s.total || 0;
+    document.getElementById('m-sent').textContent    = s.sent || 0;
+    document.getElementById('m-failed').textContent  = s.failed || 0;
+    document.getElementById('m-pending').textContent = s.pending || 0;
+    const done = (s.sent||0) + (s.failed||0);
+    const pct = s.total ? Math.round(done / s.total * 100) : 0;
+    document.getElementById('wz-progress').style.width = pct + '%';
+    document.getElementById('wz-pct').textContent = pct + '%';
+    document.getElementById('wz-counter').textContent = `${s.sent||0} / ${s.total||0} enviados`;
+  });
+  wzStream.addEventListener('tick', e => {
+    const d = JSON.parse(e.data);
+    const r = d.remaining;
+    document.getElementById('wz-countdown').textContent =
+      r > 0 ? `${String(Math.floor(r/60)).padStart(2,'0')}:${String(r%60).padStart(2,'0')}` : '--:--';
+  });
+  wzStream.addEventListener('done', e => {
+    wzStream.close();
+    wzSetBtns('stopped');
+    setStatus('WZ CONCLUÍDO', 'green');
+  });
+}
+
+function wzPause() {
+  fetch('/whatsapp/pause', {method: 'POST'})
+    .then(r => r.json())
+    .then(d => {
+      if (d.error) return;
+      wzPaused = d.paused;
+      const btn = document.getElementById('btn-pause');
+      btn.textContent = wzPaused ? '▶  Retomar' : '⏸  Pausar';
+      setStatus(wzPaused ? 'WZ PAUSADO' : 'WZ EXECUTANDO', wzPaused ? 'amber' : 'wz');
+    });
+}
+
+function wzStop() {
+  fetch('/whatsapp/stop', {method:'POST'});
+  document.getElementById('btn-pause').disabled = true;
+  setStatus('WZ PARANDO...', 'amber');
+}
+
+function wzReset() {
+  clearLog('wz-log');
+  document.getElementById('m-total').textContent   = '0';
+  document.getElementById('m-sent').textContent    = '0';
+  document.getElementById('m-failed').textContent  = '0';
+  document.getElementById('m-pending').textContent = '0';
+  document.getElementById('wz-progress').style.width = '0%';
+  document.getElementById('wz-pct').textContent    = '0%';
+  document.getElementById('wz-counter').textContent = '0 / 0 enviados';
+  document.getElementById('wz-countdown').textContent = '--:--';
+  setStatus('', '');
+  wzSetBtns('idle');
+}
+
+function wzSetBtns(state) {
+  wzState = state;
+  const btnStart = document.getElementById('btn-start');
+  const btnPause = document.getElementById('btn-pause');
+  const btnStop  = document.getElementById('btn-stop');
+
+  if (state === 'running') {
+    btnStart.disabled = true;
+    btnPause.disabled = false;
+    btnStop.disabled  = false;
+    btnStop.textContent = '■  Parar';
+    btnStop.onclick = wzStop;
+    wzPaused = false;
+    btnPause.textContent = '⏸  Pausar';
+  } else if (state === 'stopped') {
+    btnStart.disabled = true;
+    btnPause.disabled = true;
+    btnStop.disabled  = false;
+    btnStop.textContent = '↺  Nova Campanha';
+    btnStop.onclick = wzReset;
+  } else {
+    btnStart.disabled = false;
+    btnPause.disabled = true;
+    btnStop.disabled  = true;
+    btnStop.textContent = '■  Parar';
+    btnStop.onclick = wzStop;
+    wzPaused = false;
+    btnPause.textContent = '⏸  Pausar';
+  }
+}
+</script>
+{% endblock %}

@@ -1,0 +1,196 @@
+{% extends "base.html" %}
+{% block page_title %}LEADS  /  Extração por CNAE  —  Brasil.io + CNPJ.ws{% endblock %}
+
+{% block content %}
+<div class="two-col">
+
+  <!-- ── Painel esquerdo ─────────────────────────────────────────────── -->
+  <div class="panel left-panel">
+    <div class="sec-header leads" style="margin-top:4px">BRASIL.IO  —  TOKEN GRATUITO</div>
+    <p class="hint">Crie conta em brasil.io → /auth/tokens-api/ para gerar o token.</p>
+    <label>API Token<input id="cfg-token" type="password" value="{{ brasilio_token }}" placeholder="Token gratuito do Brasil.io"></label>
+
+    <div class="sec-header leads">FILTROS DE BUSCA</div>
+    <label>Código(s) CNAE</label>
+    <div id="cnae-list">
+      <div class="cnae-row">
+        <input type="text" class="cnae-input" placeholder="Ex: 4930201">
+      </div>
+    </div>
+    <button class="btn-ghost small leads mt-4" onclick="addCnae()">+ Adicionar CNAE</button>
+
+    <label class="mt-8">Estado (UF)<input id="cfg-uf" type="text" placeholder="Ex: SC, SP  (vazio = Brasil todo)"></label>
+    <label>Município (opcional)<input id="cfg-mun" type="text" placeholder="Ex: CRICIUMA, FLORIANOPOLIS"></label>
+    <label>Máx. por CNAE
+      <input id="cfg-max" type="number" value="200" min="1" max="2000">
+    </label>
+
+    <div class="sec-header leads">OPÇÕES</div>
+    <label><input type="checkbox" id="cfg-enrich" checked> Enriquecer via CNPJ.ws (e-mail, telefone, sócios)</label>
+    <label><input type="checkbox" id="cfg-only-email"> Exportar apenas leads com e-mail</label>
+    <label><input type="checkbox" id="cfg-only-phone"> Exportar apenas leads com telefone</label>
+
+    <div class="sec-header leads">REFERÊNCIA  —  CNAEs COMUNS</div>
+    <div class="cnae-ref-list">
+      {% for code, desc in [
+        ('4930201','Transporte rodoviário de cargas – geral'),
+        ('4930202','Transporte rodoviário – carga pesada'),
+        ('5229001','Serviços de apoio ao transporte'),
+        ('6201501','Desenvolvimento de softwares customizados'),
+        ('4610100','Representantes comerciais'),
+        ('4711301','Comércio varejista – hipermercados'),
+        ('4731800','Comércio varejista de combustíveis'),
+        ('5611201','Restaurantes e similares'),
+        ('4120400','Construção de edifícios'),
+        ('8621601','UTI móvel – serviços médicos'),
+      ] %}
+      <div class="cnae-ref-item" onclick="pasteCnae('{{ code }}')">
+        <span class="cnae-code leads">{{ code }}</span>
+        <span class="cnae-desc">{{ desc }}</span>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+
+  <!-- ── Painel direito ──────────────────────────────────────────────── -->
+  <div class="panel right-panel">
+    <div class="console-header">
+      <span class="console-title leads">EXTRATOR DE LEADS  —  CNAE / CNPJ.ws</span>
+      <button class="btn-ghost small" onclick="clearLog('leads-log')">Limpar log</button>
+      <button class="btn-ghost small red" onclick="clearLeadsDb()">Limpar base</button>
+    </div>
+    <div class="metrics-row">
+      <div class="metric-card"><div id="m-total"  class="metric-val muted">{{ stats.total }}</div><div class="metric-lbl">TOTAL</div></div>
+      <div class="metric-card"><div id="m-email"  class="metric-val leads">{{ stats.with_email }}</div><div class="metric-lbl">COM E-MAIL</div></div>
+      <div class="metric-card"><div id="m-phone"  class="metric-val green">{{ stats.with_phone }}</div><div class="metric-lbl">COM TEL.</div></div>
+      <div class="metric-card"><div id="m-nocont" class="metric-val amber">{{ [stats.total - [stats.with_email, stats.with_phone]|max, 0]|max }}</div><div class="metric-lbl">SEM CONTATO</div></div>
+    </div>
+    <div class="progress-row">
+      <div class="progress-bar"><div id="leads-progress" class="progress-fill leads" style="width:0%"></div></div>
+      <span id="leads-pct" class="pct-label">0%</span>
+    </div>
+    <pre id="leads-log" class="console-log"></pre>
+    <div class="footer-btns">
+      <button id="btn-start" class="btn-primary leads" onclick="leadsStart()">▶  Iniciar Extração</button>
+      <button id="btn-stop"  class="btn-ghost red"   onclick="leadsStop()" disabled>■  Parar</button>
+      <button class="btn-ghost green" onclick="leadsExport()">📥  Exportar Excel</button>
+      <span id="leads-counter" class="counter-label">{{ stats.total }} leads na base</span>
+    </div>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let leadsStream = null;
+
+function leadsStart() {
+  const cnaes = Array.from(document.querySelectorAll('.cnae-input'))
+    .map(e => e.value.trim()).filter(Boolean);
+
+  if (!document.getElementById('cfg-token').value.trim())
+    return alert('Informe o token gratuito do Brasil.io.');
+  if (!cnaes.length)
+    return alert('Informe ao menos um código CNAE.');
+
+  const cfg = {
+    token:     document.getElementById('cfg-token').value.trim(),
+    cnaes,
+    uf:        document.getElementById('cfg-uf').value.trim().toUpperCase(),
+    municipio: document.getElementById('cfg-mun').value.trim().toUpperCase(),
+    max_r:     parseInt(document.getElementById('cfg-max').value) || 200,
+    enrich:    document.getElementById('cfg-enrich').checked,
+  };
+
+  fetch('/leads/start', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(cfg),
+  })
+  .then(r => r.json())
+  .then(data => {
+    if (data.error) return alert(data.error);
+    document.getElementById('btn-start').disabled = true;
+    document.getElementById('btn-stop').disabled  = false;
+    setStatus('EXTRAINDO', 'leads');
+    startLeadsSSE(data.stream_id);
+  });
+}
+
+function startLeadsSSE(streamId) {
+  if (leadsStream) leadsStream.close();
+  leadsStream = new EventSource(`/leads/stream/${streamId}`);
+
+  leadsStream.addEventListener('log', e => {
+    const d = JSON.parse(e.data);
+    appendLog('leads-log', d.msg, d.level);
+  });
+
+  leadsStream.addEventListener('progress', e => {
+    const d = JSON.parse(e.data);
+    if (d.pct !== undefined) {
+      document.getElementById('leads-progress').style.width = d.pct + '%';
+      document.getElementById('leads-pct').textContent = d.pct + '%';
+    }
+  });
+
+  leadsStream.addEventListener('stats', e => {
+    const s = JSON.parse(e.data);
+    document.getElementById('m-total').textContent  = s.total;
+    document.getElementById('m-email').textContent  = s.with_email;
+    document.getElementById('m-phone').textContent  = s.with_phone;
+    document.getElementById('m-nocont').textContent = Math.max(0, s.total - Math.max(s.with_email, s.with_phone));
+    document.getElementById('leads-counter').textContent = `${s.total} leads na base`;
+  });
+
+  leadsStream.addEventListener('done', e => {
+    leadsStream.close();
+    document.getElementById('btn-start').disabled = false;
+    document.getElementById('btn-stop').disabled  = true;
+    document.getElementById('leads-progress').style.width = '100%';
+    document.getElementById('leads-pct').textContent = '100%';
+    setStatus('CONCLUÍDO', 'green');
+  });
+}
+
+function leadsStop() {
+  fetch('/leads/stop', {method:'POST'});
+  document.getElementById('btn-stop').disabled = true;
+  setStatus('PARANDO...', 'amber');
+}
+
+function leadsExport() {
+  const onlyEmail = document.getElementById('cfg-only-email').checked ? '1' : '0';
+  const onlyPhone = document.getElementById('cfg-only-phone').checked ? '1' : '0';
+  window.location.href = `/leads/export?fmt=emkt&only_email=${onlyEmail}&only_phone=${onlyPhone}`;
+}
+
+function clearLeadsDb() {
+  if (!confirm('Remover todos os leads da base?')) return;
+  fetch('/leads/clear', {method:'POST'}).then(r => r.json()).then(d => {
+    appendLog('leads-log', `Base limpa — ${d.deleted} leads removidos.`, 'WARNING');
+    document.getElementById('m-total').textContent  = '0';
+    document.getElementById('m-email').textContent  = '0';
+    document.getElementById('m-phone').textContent  = '0';
+    document.getElementById('m-nocont').textContent = '0';
+    document.getElementById('leads-counter').textContent = '0 leads na base';
+  });
+}
+
+function addCnae() {
+  const row = document.createElement('div');
+  row.className = 'cnae-row';
+  row.innerHTML = `<input type="text" class="cnae-input" placeholder="Ex: 4930201">
+    <button class="btn-remove" onclick="this.parentElement.remove()">✕</button>`;
+  document.getElementById('cnae-list').appendChild(row);
+}
+
+function pasteCnae(code) {
+  const empty = Array.from(document.querySelectorAll('.cnae-input')).find(e => !e.value.trim());
+  if (empty) { empty.value = code; return; }
+  addCnae();
+  document.querySelectorAll('.cnae-input')[document.querySelectorAll('.cnae-input').length - 1].value = code;
+}
+</script>
+{% endblock %}

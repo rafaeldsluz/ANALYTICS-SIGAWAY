@@ -1,0 +1,407 @@
+{% extends "base.html" %}
+{% block page_title %}SDR AGENT  /  Dashboard de Performance  —  Carina{% endblock %}
+
+{% block content %}
+<div class="dash-wrap">
+
+  <!-- ── KPI cards ────────────────────────────────────────────────────── -->
+  <div class="kpi-row">
+    <div class="kpi-card">
+      <div class="kpi-icon">💬</div>
+      <div id="kpi-conv" class="kpi-val sdr">{{ kpi.conversations }}</div>
+      <div class="kpi-lbl">CONVERSAS TOTAIS</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-icon">✅</div>
+      <div id="kpi-qual" class="kpi-val green">{{ kpi.qualified }}</div>
+      <div class="kpi-lbl">QUALIFICADOS</div>
+    </div>
+    <div class="kpi-card kpi-meeting-card">
+      <div class="kpi-icon">📅</div>
+      <div id="kpi-meetings" class="kpi-val kpi-meeting">{{ kpi.meetings_scheduled }}</div>
+      <div class="kpi-lbl">REUNIÕES AGENDADAS</div>
+      <div class="kpi-meeting-badge">IA confirmou link/horário</div>
+    </div>
+    <div class="kpi-card kpi-highlight">
+      <div class="kpi-icon">📈</div>
+      <div id="kpi-rate" class="kpi-val amber">{{ kpi.conv_rate }}%</div>
+      <div class="kpi-lbl">TAXA DE CONVERSÃO</div>
+      <div class="kpi-bar-wrap"><div id="kpi-rate-bar" class="kpi-bar-fill" style="width:{{ kpi.conv_rate }}%"></div></div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-icon">✉️</div>
+      <div id="kpi-msgs" class="kpi-val muted">{{ kpi.total_msgs }}</div>
+      <div class="kpi-lbl">MENSAGENS TROCADAS</div>
+    </div>
+  </div>
+
+  <!-- ── Period selector ──────────────────────────────────────────────── -->
+  <div class="period-row">
+    <span class="mono small muted">Período:</span>
+    {% for d, label in [(7,'7 dias'),(14,'14 dias'),(30,'30 dias'),(90,'90 dias')] %}
+    <button class="btn-period {% if d==30 %}active{% endif %}" data-days="{{ d }}">{{ label }}</button>
+    {% endfor %}
+    <button class="btn-ghost small sdr" style="margin-left:auto" onclick="refreshDash()">↻ Atualizar</button>
+    <a href="/sdr" class="btn-ghost small">← Torre de Controle</a>
+  </div>
+
+  <!-- ── Charts row 1 ─────────────────────────────────────────────────── -->
+  <div class="charts-row">
+    <div class="chart-card wide">
+      <div class="chart-title">TENDÊNCIA DIÁRIA  —  Conversas vs Qualificações</div>
+      <canvas id="chart-timeline" height="110"></canvas>
+    </div>
+    <div class="chart-card">
+      <div class="chart-title">FUNIL DE CONVERSÃO</div>
+      <canvas id="chart-funnel" height="180"></canvas>
+      <div class="funnel-labels">
+        <div class="funnel-item"><span class="dot sdr">●</span> Total: <b id="fn-total">{{ funnel.total }}</b></div>
+        <div class="funnel-item"><span class="dot leads">●</span> Responderam: <b id="fn-resp">{{ funnel.responded }}</b></div>
+        <div class="funnel-item"><span class="dot green">●</span> Qualificados: <b id="fn-qual">{{ funnel.qualified }}</b></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Charts row 2 ─────────────────────────────────────────────────── -->
+  <div class="charts-row">
+    <div class="chart-card">
+      <div class="chart-title">DISTRIBUIÇÃO POR HORA DO DIA</div>
+      <canvas id="chart-hours" height="180"></canvas>
+    </div>
+    <div class="chart-card">
+      <div class="chart-title">TIPOS DE MENSAGEM</div>
+      <canvas id="chart-types" height="180"></canvas>
+    </div>
+  </div>
+
+  <!-- ── Qualified leads table ────────────────────────────────────────── -->
+  <div class="dash-table-card">
+    <div class="dash-table-header">
+      <span class="mono small" style="color:var(--green);font-weight:700;letter-spacing:1px">ÚLTIMAS QUALIFICAÇÕES</span>
+      <span class="mono small muted">{{ kpi.qualified }} lead(s) qualificado(s)</span>
+    </div>
+    <div class="history-table-wrap">
+      <table class="history-table" id="qual-table">
+        <thead>
+          <tr>
+            <th>CONTATO</th>
+            <th>SESSÃO</th>
+            <th>KEYWORD</th>
+            <th>QUALIFICADO EM</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for q in qualified_list %}
+          <tr>
+            <td>{{ q.nome or '—' }}</td>
+            <td class="mono small muted">{{ q.session_id[:30] if q.session_id else '—' }}</td>
+            <td><span class="badge-keyword">{{ q.keyword or '—' }}</span></td>
+            <td class="mono small muted">{{ q.updated_at or '—' }}</td>
+          </tr>
+          {% else %}
+          <tr><td colspan="4" class="muted center" style="padding:20px">Nenhuma qualificação registrada ainda.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
+<style>
+  .dash-wrap { display:flex; flex-direction:column; gap:12px; padding-bottom:16px; }
+
+  /* KPI */
+  .kpi-row { display:grid; grid-template-columns:repeat(5,1fr); gap:10px; }
+  .kpi-card {
+    background:var(--surface); border:1px solid var(--border); border-radius:14px;
+    padding:18px 16px 14px; text-align:center; position:relative; overflow:hidden;
+    transition: border-color .2s, box-shadow .2s;
+  }
+  .kpi-card:hover { border-color:var(--border2); box-shadow:0 4px 24px rgba(0,0,0,.4); }
+  .kpi-card.kpi-highlight { border-color:rgba(240,168,0,.2); }
+  .kpi-card.kpi-meeting-card {
+    border-color:rgba(16,185,129,.3);
+    background:linear-gradient(145deg, var(--surface) 70%, rgba(16,185,129,.06));
+  }
+  .kpi-card.kpi-meeting-card:hover { border-color:rgba(16,185,129,.6); box-shadow:0 4px 24px rgba(16,185,129,.15); }
+  .kpi-icon { font-size:22px; margin-bottom:6px; }
+  .kpi-val  { font-family:var(--mono); font-size:36px; font-weight:700; line-height:1; }
+  .kpi-val.sdr     { color:var(--sdr);   text-shadow:0 0 20px rgba(129,140,248,.5); }
+  .kpi-val.green   { color:var(--green); text-shadow:0 0 20px rgba(0,255,136,.5); }
+  .kpi-val.amber   { color:var(--amber); text-shadow:0 0 20px rgba(240,168,0,.5); }
+  .kpi-val.muted   { color:var(--text-sec); }
+  .kpi-val.kpi-meeting { color:#10b981; text-shadow:0 0 24px rgba(16,185,129,.6); }
+  .kpi-lbl  { font-family:var(--mono); font-size:8px; font-weight:700; color:var(--muted); margin-top:5px; letter-spacing:1.5px; }
+  .kpi-meeting-badge {
+    display:inline-block; margin-top:8px;
+    background:rgba(16,185,129,.12); color:#10b981;
+    border:1px solid rgba(16,185,129,.25); border-radius:5px;
+    font-family:var(--mono); font-size:8px; font-weight:700;
+    padding:2px 7px; letter-spacing:.5px;
+  }
+  .kpi-bar-wrap { height:3px; background:var(--border); border-radius:2px; margin-top:10px; overflow:hidden; }
+  .kpi-bar-fill { height:100%; background:var(--amber); border-radius:2px; transition:width .6s ease; box-shadow:0 0 6px rgba(240,168,0,.5); }
+
+  /* Period selector */
+  .period-row { display:flex; align-items:center; gap:6px; }
+  .btn-period {
+    background:transparent; border:1px solid var(--border2); border-radius:7px;
+    color:var(--muted); font-family:var(--mono); font-size:10px; font-weight:700;
+    padding:5px 12px; cursor:pointer; transition:all .15s;
+  }
+  .btn-period:hover  { color:var(--text); border-color:var(--muted); }
+  .btn-period.active { background:var(--sdr-dim); color:var(--sdr); border-color:rgba(129,140,248,.4); }
+
+  /* Charts */
+  .charts-row { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  .chart-card {
+    background:var(--surface); border:1px solid var(--border); border-radius:14px;
+    padding:16px 18px 14px;
+  }
+  .chart-card.wide { grid-column: 1 / 2; }
+  .charts-row:first-of-type .chart-card.wide { grid-column: 1 / 2; }
+  /* Make first chart row: 2/3 + 1/3 */
+  .charts-row:nth-of-type(2) { grid-template-columns: 2fr 1fr; }
+
+  .chart-title {
+    font-family:var(--mono); font-size:9px; font-weight:700; color:var(--muted);
+    letter-spacing:1.5px; margin-bottom:12px; text-transform:uppercase;
+  }
+
+  .funnel-labels { display:flex; flex-direction:column; gap:4px; margin-top:10px; }
+  .funnel-item { font-size:11px; color:var(--text-sec); display:flex; align-items:center; gap:6px; }
+  .funnel-item b { color:var(--text); font-family:var(--mono); }
+
+  /* Table */
+  .dash-table-card {
+    background:var(--surface); border:1px solid var(--border); border-radius:14px;
+    overflow:hidden;
+  }
+  .dash-table-header {
+    display:flex; align-items:center; justify-content:space-between;
+    padding:12px 18px; border-bottom:1px solid var(--border);
+    background:rgba(0,0,0,.2);
+  }
+  .badge-keyword {
+    background:var(--green-dim); color:var(--green); border-radius:5px;
+    padding:2px 8px; font-family:var(--mono); font-size:10px; font-weight:700;
+  }
+</style>
+
+<script>
+// ── Chart.js global defaults ──────────────────────────────────────────────────
+Chart.defaults.color          = '#768390';
+Chart.defaults.borderColor    = '#1e2832';
+Chart.defaults.font.family    = "'Consolas', monospace";
+Chart.defaults.font.size      = 10;
+Chart.defaults.plugins.legend.labels.boxWidth = 10;
+
+// ── Data from server ──────────────────────────────────────────────────────────
+const _initial = {
+  daily:     {{ daily | tojson }},
+  funnel:    {{ funnel | tojson }},
+  hourly:    {{ hourly | tojson }},
+  msg_types: {{ msg_types | tojson }},
+  kpi:       {{ kpi | tojson }},
+  qualified_list: {{ qualified_list | tojson }},
+};
+
+// ── Chart instances ───────────────────────────────────────────────────────────
+let cTimeline, cFunnel, cHours, cTypes;
+
+function buildCharts(data) {
+  if (cTimeline) cTimeline.destroy();
+  if (cFunnel)   cFunnel.destroy();
+  if (cHours)    cHours.destroy();
+  if (cTypes)    cTypes.destroy();
+
+  // ── Timeline ──
+  const days    = data.daily.map(r => r.day.slice(5));
+  const convs   = data.daily.map(r => r.conversations);
+  const quals   = data.daily.map(r => r.meetings || 0);
+
+  cTimeline = new Chart(document.getElementById('chart-timeline'), {
+    type: 'line',
+    data: {
+      labels: days,
+      datasets: [
+        {
+          label: 'Conversas',
+          data: convs,
+          borderColor: '#818cf8',
+          backgroundColor: 'rgba(129,140,248,.08)',
+          fill: true,
+          tension: 0.4,
+          pointRadius: 3,
+          pointBackgroundColor: '#818cf8',
+        },
+        {
+          label: 'Qualificados',
+          data: quals,
+          borderColor: '#00ff88',
+          backgroundColor: 'rgba(0,255,136,.06)',
+          fill: true,
+          tension: 0.4,
+          pointRadius: 3,
+          pointBackgroundColor: '#00ff88',
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      interaction: { mode: 'index', intersect: false },
+      plugins: { legend: { position: 'top' } },
+      scales: {
+        x: { grid: { color: '#1e2832' } },
+        y: { grid: { color: '#1e2832' }, beginAtZero: true, ticks: { precision: 0 } },
+      },
+    },
+  });
+
+  // ── Funnel (horizontal bar) ──
+  const fn = data.funnel;
+  cFunnel = new Chart(document.getElementById('chart-funnel'), {
+    type: 'bar',
+    data: {
+      labels: ['Total', 'Responderam', 'Qualificados'],
+      datasets: [{
+        data: [fn.total, fn.responded, fn.qualified],
+        backgroundColor: ['rgba(129,140,248,.7)', 'rgba(56,189,248,.7)', 'rgba(0,255,136,.7)'],
+        borderColor:     ['#818cf8', '#38bdf8', '#00ff88'],
+        borderWidth: 1,
+        borderRadius: 6,
+      }],
+    },
+    options: {
+      indexAxis: 'y',
+      responsive: true,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { grid: { color: '#1e2832' }, beginAtZero: true, ticks: { precision: 0 } },
+        y: { grid: { display: false } },
+      },
+    },
+  });
+
+  // ── Hourly ──
+  const allHours  = Array.from({length: 24}, (_, i) => String(i).padStart(2,'0') + 'h');
+  const hourlyCnt = Array(24).fill(0);
+  data.hourly.forEach(r => { hourlyCnt[r.hour] = r.cnt; });
+
+  cHours = new Chart(document.getElementById('chart-hours'), {
+    type: 'bar',
+    data: {
+      labels: allHours,
+      datasets: [{
+        label: 'Conversas',
+        data: hourlyCnt,
+        backgroundColor: hourlyCnt.map(v => {
+          const max = Math.max(...hourlyCnt, 1);
+          const alpha = 0.2 + (v / max) * 0.65;
+          return `rgba(129,140,248,${alpha.toFixed(2)})`;
+        }),
+        borderColor: 'rgba(129,140,248,.5)',
+        borderWidth: 1,
+        borderRadius: 4,
+      }],
+    },
+    options: {
+      responsive: true,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { grid: { display: false }, ticks: { maxRotation: 0 } },
+        y: { grid: { color: '#1e2832' }, beginAtZero: true, ticks: { precision: 0 } },
+      },
+    },
+  });
+
+  // ── Message types (doughnut) ──
+  const typeColors = ['#818cf8','#38bdf8','#00ff88','#25D366','#f0a800','#ff4d4d','#a5b4fc','#3d4f60'];
+  cTypes = new Chart(document.getElementById('chart-types'), {
+    type: 'doughnut',
+    data: {
+      labels: data.msg_types.map(r => r.msg_type),
+      datasets: [{
+        data: data.msg_types.map(r => r.cnt),
+        backgroundColor: typeColors,
+        borderColor: '#0f1419',
+        borderWidth: 2,
+        hoverOffset: 6,
+      }],
+    },
+    options: {
+      responsive: true,
+      cutout: '62%',
+      plugins: {
+        legend: { position: 'right', labels: { padding: 12 } },
+      },
+    },
+  });
+}
+
+// ── KPI update ────────────────────────────────────────────────────────────────
+function updateKPI(kpi) {
+  document.getElementById('kpi-conv').textContent     = kpi.conversations;
+  document.getElementById('kpi-qual').textContent     = kpi.qualified;
+  document.getElementById('kpi-meetings').textContent = kpi.meetings_scheduled ?? 0;
+  document.getElementById('kpi-rate').textContent     = kpi.conv_rate + '%';
+  document.getElementById('kpi-msgs').textContent     = kpi.total_msgs;
+  document.getElementById('kpi-rate-bar').style.width = Math.min(kpi.conv_rate, 100) + '%';
+}
+
+function updateFunnelLabels(fn) {
+  document.getElementById('fn-total').textContent = fn.total;
+  document.getElementById('fn-resp').textContent  = fn.responded;
+  document.getElementById('fn-qual').textContent  = fn.qualified;
+}
+
+// ── Refresh ───────────────────────────────────────────────────────────────────
+let _days = 30;
+
+function refreshDash(days) {
+  if (days) _days = days;
+  fetch(`/sdr/dashboard/data?days=${_days}`)
+    .then(r => r.json())
+    .then(data => {
+      updateKPI(data.kpi);
+      updateFunnelLabels(data.funnel);
+      buildCharts(data);
+      updateQualTable(data.qualified_list);
+    });
+}
+
+function updateQualTable(list) {
+  const tb = document.querySelector('#qual-table tbody');
+  if (!list.length) {
+    tb.innerHTML = '<tr><td colspan="4" class="muted center" style="padding:20px">Nenhuma qualificação registrada.</td></tr>';
+    return;
+  }
+  tb.innerHTML = list.map(q => `
+    <tr>
+      <td>${q.nome || '—'}</td>
+      <td class="mono small muted">${(q.session_id||'').substring(0,30)}</td>
+      <td><span class="badge-keyword">${q.keyword||'—'}</span></td>
+      <td class="mono small muted">${q.updated_at||'—'}</td>
+    </tr>`).join('');
+}
+
+// ── Period buttons ────────────────────────────────────────────────────────────
+document.querySelectorAll('.btn-period').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.btn-period').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    refreshDash(parseInt(btn.dataset.days));
+  });
+});
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+buildCharts(_initial);
+
+// Auto-refresh a cada 30s
+setInterval(() => refreshDash(), 30000);
+</script>
+{% endblock %}

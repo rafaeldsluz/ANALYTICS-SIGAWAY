@@ -1,0 +1,399 @@
+{% extends "base.html" %}
+{% block page_title %}DISPARO E-MKT  /  Disparo Automático{% endblock %}
+
+{% block content %}
+<div class="two-col">
+
+  <!-- ── Painel esquerdo ─────────────────────────────────────────────── -->
+  <div class="panel left-panel" style="padding:0; display:flex; flex-direction:column;">
+    <div class="tabs" style="flex-shrink:0">
+      <button class="tab active" data-tab="config">CONFIG</button>
+      <button class="tab" data-tab="email">E-MAIL</button>
+      <button class="tab" data-tab="metrics">MÉTRICAS</button>
+      <button class="tab" data-tab="history" onclick="refreshHistory()">HISTÓRICO</button>
+    </div>
+    <div style="flex:1; overflow-y:auto; padding:4px 16px 16px">
+
+    <!-- CONFIG -->
+    <div class="tab-content active" id="tab-config">
+      <div class="sec-header green">ACESSO AO SIGAWAY</div>
+      <label>URL da plataforma<input id="cfg-url" type="text" value="{{ sigaway_url }}"></label>
+      <label>Usuário<input id="cfg-user" type="text" value="{{ sigaway_user }}"></label>
+      <label>Senha<input id="cfg-pass" type="password" value="{{ sigaway_pass }}"></label>
+
+      <div class="sec-header green">ENVIO DE E-MAIL (SMTP)</div>
+      <label>E-mail remetente<input id="cfg-smtp-user" type="text" value="{{ smtp_user }}"></label>
+      <label>Senha do e-mail<input id="cfg-smtp-pass" type="password" value="{{ smtp_pass }}"></label>
+
+      <div class="sec-header green">DISPARO</div>
+      <label>Assunto
+        <input id="cfg-subject" type="text" value="SUA FROTA APRESENTA VEICULOS COM PERFORMANCE REDUZIDA">
+      </label>
+      <label>CC (opcional)<input id="cfg-cc" type="text" placeholder="gerencia@empresa.com"></label>
+
+      <div class="sec-header green" style="margin-top:14px">INTERVALO ENTRE DISPAROS</div>
+      <p class="hint">Tempo de espera aleatório entre cada e-mail enviado.</p>
+      <div class="interval-row">
+        <label style="flex:1">Mínimo (s)<input id="cfg-imin" type="number" value="30" min="5" oninput="updateEmailEta()"></label>
+        <label style="flex:1">Máximo (s)<input id="cfg-imax" type="number" value="90" min="10" oninput="updateEmailEta()"></label>
+      </div>
+      <p id="email-eta-hint" class="hint" style="margin-top:4px">~60s de média · 100 e-mails ≈ 1h 40min</p>
+      <label>
+        <input type="checkbox" id="cfg-skip-sent" checked>
+        Pular e-mails já enviados em campanhas anteriores
+      </label>
+
+      <div class="sec-header green">PLANILHA EXCEL</div>
+      <div class="file-row">
+        <input id="cfg-excel" type="text" value="{{ default_excel }}" readonly style="color:var(--text-muted);font-size:11px;">
+        <label class="btn-file" title="Trocar arquivo">···<input type="file" accept=".xlsx,.xls" onchange="setExcelPath(this)"></label>
+      </div>
+      {% if excel_error %}
+      <p class="hint" style="color:var(--red);margin-top:4px">⚠ {{ excel_error }}</p>
+      {% elif excel_count %}
+      <p class="hint" style="color:var(--green);margin-top:4px">✓ {{ excel_count }} destinatários carregados</p>
+      {% endif %}
+      <p id="excel-status" class="hint" style="margin-top:4px"></p>
+    </div>
+
+    <!-- E-MAIL -->
+    <div class="tab-content" id="tab-email">
+      <div class="sec-header green">CORPO DO E-MAIL</div>
+      <p class="hint">Use [SCREENSHOT] onde a imagem deve aparecer no corpo.</p>
+      <textarea id="cfg-body" rows="16">Você sabia que possui acesso a um ranking que mostra exatamente quais veículos estão abaixo da nota ideal?
+
+Nos últimos 7 dias, parte da sua frota operou abaixo do padrão recomendado.
+
+A diferença entre um score 96 e 100 pode representar:
+
+• Mais consumo de combustível
+
+• Maior desgaste de pneus
+
+• Maior risco de parada inesperada
+
+• Maior risco de acidente
+
+• Maior risco de multa
+
+A pergunta não é se isso impacta o custo.
+
+É QUANTO.
+
+[SCREENSHOT]
+
+Se quiser entender quais veículos estão impactando sua média e como corrigir isso rapidamente, acesse o ranking completo da sua frota: https://app.sigaway.com.br/
+
+Ou fale diretamente com um de nossos especialistas e receba uma análise personalizada da sua operação.</textarea>
+    </div>
+
+    <!-- MÉTRICAS -->
+    <div class="tab-content" id="tab-metrics">
+      <div class="sec-header green">RESUMO GERAL</div>
+      <div class="metrics-row" style="padding:0;margin-top:8px">
+        <div class="metric-card"><div id="mm-total"   class="metric-val muted">—</div><div class="metric-lbl">CAMPANHAS</div></div>
+        <div class="metric-card"><div id="mm-sent"    class="metric-val green">—</div><div class="metric-lbl">ENVIADOS</div></div>
+        <div class="metric-card"><div id="mm-failed"  class="metric-val red">—</div><div class="metric-lbl">FALHAS</div></div>
+        <div class="metric-card"><div id="mm-bounced" class="metric-val amber">—</div><div class="metric-lbl">RETORNOS</div></div>
+      </div>
+      <p class="hint mt-8">Veja o detalhamento por campanha na aba <strong>HISTÓRICO</strong>.</p>
+    </div>
+
+    <!-- HISTÓRICO -->
+    <div class="tab-content" id="tab-history">
+      <div class="sec-header green" style="margin-top:4px">CAMPANHAS</div>
+      <div class="history-table-wrap">
+        <table class="history-table">
+          <thead><tr>
+            <th>ID</th><th>Total</th><th>Enviados</th><th>Falhas</th><th>Status</th><th></th>
+          </tr></thead>
+          <tbody id="history-body">
+            {% for c in history %}
+            <tr>
+              <td class="mono small">{{ c.campaign_id[-16:] }}</td>
+              <td>{{ c.total or 0 }}</td>
+              <td class="green">{{ c.sent or 0 }}</td>
+              <td class="red">{{ c.failed or 0 }}</td>
+              <td>{{ "Concluída" if c.completed_at else "Em andamento" }}</td>
+              <td><button class="btn-ghost small green" onclick="loadSends('{{ c.campaign_id }}')">Ver</button></td>
+            </tr>
+            {% else %}
+            <tr><td colspan="6" class="muted center">Nenhuma campanha ainda.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;margin-top:6px">
+        <button class="btn-ghost small" onclick="refreshHistory()">↻ Atualizar</button>
+        <span id="sends-campaign-label" class="hint"></span>
+      </div>
+
+      <div id="sends-section" style="display:none">
+        <div class="sec-header green" style="margin-top:14px">ENVIOS DA CAMPANHA</div>
+        <div class="history-table-wrap" style="max-height:260px">
+          <table class="history-table">
+            <thead><tr>
+              <th>Empresa</th><th>E-mail</th><th>Status</th><th>Retorno</th><th>Horário</th>
+            </tr></thead>
+            <tbody id="sends-body"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+    </div><!-- /inner scroll -->
+  </div>
+
+  <!-- ── Painel direito: console ─────────────────────────────────────── -->
+  <div class="panel right-panel">
+    <div class="console-header">
+      <span class="console-title green">CONSOLE DE OPERAÇÕES</span>
+      <button class="btn-ghost small" onclick="clearLog('email-log')">Limpar</button>
+    </div>
+    <div class="metrics-row">
+      <div class="metric-card"><div id="m-total"  class="metric-val muted">0</div><div class="metric-lbl">TOTAL</div></div>
+      <div class="metric-card"><div id="m-sent"   class="metric-val green">0</div><div class="metric-lbl">ENVIADOS</div></div>
+      <div class="metric-card"><div id="m-failed" class="metric-val red">0</div><div class="metric-lbl">FALHAS</div></div>
+      <div class="metric-card"><div id="m-skip"   class="metric-val amber">0</div><div class="metric-lbl">PULADOS</div></div>
+      <div class="metric-card"><div id="m-noemail"class="metric-val amber">0</div><div class="metric-lbl">SEM EMAIL</div></div>
+    </div>
+    <div class="progress-row">
+      <div class="progress-bar"><div id="email-progress" class="progress-fill green" style="width:0%"></div></div>
+      <span id="email-pct" class="pct-label">0%</span>
+    </div>
+    <pre id="email-log" class="console-log"></pre>
+    <div class="footer-btns">
+      <button id="btn-start" class="btn-primary green" onclick="emailStart()">▶  Iniciar Varredura</button>
+      <button id="btn-pause" class="btn-ghost amber" onclick="emailPause()" disabled>⏸  Pausar</button>
+      <button id="btn-stop"  class="btn-ghost red"   onclick="emailStop()"  disabled>■  Parar</button>
+      <span id="email-counter" class="counter-label">0 / 0 enviados</span>
+    </div>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let emailStream = null;
+let emailPaused = false;
+let emailState  = 'idle'; // idle | running | stopped
+
+// Ao carregar a página, verifica se há campanha ativa e reconecta
+document.addEventListener('DOMContentLoaded', () => {
+  fetch('/email/status')
+    .then(r => r.json())
+    .then(d => {
+      if (d.running && d.stream_id) {
+        appendLog('email-log', 'Campanha em andamento — reconectando ao log...', 'WARNING');
+        setBtns('running');
+        setStatus('EXECUTANDO', 'green');
+        startEmailSSE(d.stream_id);
+      }
+    });
+});
+
+function updateEmailEta() {
+  const mn  = parseInt(document.getElementById('cfg-imin').value) || 30;
+  const mx  = parseInt(document.getElementById('cfg-imax').value) || 90;
+  const avg = Math.round((mn + mx) / 2);
+  const totalMin = Math.round(avg * 100 / 60);
+  const h = Math.floor(totalMin / 60), m = totalMin % 60;
+  const eta = h > 0 ? `${h}h ${m.toString().padStart(2,'0')}min` : `${m}min`;
+  document.getElementById('email-eta-hint').textContent =
+    `~${avg}s de média entre envios · 100 e-mails ≈ ${eta}`;
+}
+
+function emailStart() {
+  const cfg = {
+    url:          document.getElementById('cfg-url').value.trim(),
+    username:     document.getElementById('cfg-user').value.trim(),
+    password:     document.getElementById('cfg-pass').value.trim(),
+    subject:      document.getElementById('cfg-subject').value.trim(),
+    cc:           document.getElementById('cfg-cc').value.trim(),
+    email_body:   document.getElementById('cfg-body').value.trim(),
+    smtp_user:    document.getElementById('cfg-smtp-user').value.trim(),
+    smtp_pass:    document.getElementById('cfg-smtp-pass').value.trim(),
+    excel_path:   document.getElementById('cfg-excel').value.trim(),
+    interval_min: parseInt(document.getElementById('cfg-imin').value) || 30,
+    interval_max: parseInt(document.getElementById('cfg-imax').value) || 90,
+    skip_sent:    document.getElementById('cfg-skip-sent').checked,
+  };
+  if (!cfg.url || !cfg.username || !cfg.password) {
+    return alert('Preencha URL, usuário e senha do Sigaway.');
+  }
+
+  fetch('/email/start', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(cfg),
+  })
+  .then(r => r.json())
+  .then(data => {
+    if (data.error) return alert(data.error);
+    setBtns('running');
+    setStatus('EXECUTANDO', 'green');
+    startEmailSSE(data.stream_id);
+  });
+}
+
+function startEmailSSE(streamId) {
+  if (emailStream) emailStream.close();
+  emailStream = new EventSource(`/email/stream/${streamId}`);
+
+  emailStream.addEventListener('log', e => {
+    const d = JSON.parse(e.data);
+    appendLog('email-log', d.msg, d.level);
+  });
+
+  emailStream.addEventListener('progress', e => {
+    const d = JSON.parse(e.data);
+    document.getElementById('email-progress').style.width = d.pct + '%';
+    document.getElementById('email-pct').textContent = d.pct + '%';
+    document.getElementById('m-total').textContent   = d.total;
+    document.getElementById('m-sent').textContent    = d.sent;
+    document.getElementById('m-failed').textContent  = d.errors;
+    document.getElementById('m-skip').textContent    = d.skipped;
+    document.getElementById('m-noemail').textContent = d.no_email;
+    document.getElementById('email-counter').textContent = `${d.sent} / ${d.total} enviados`;
+  });
+
+  emailStream.addEventListener('done', e => {
+    emailStream.close();
+    setBtns('stopped');
+    setStatus('CONCLUÍDO', 'green');
+    document.getElementById('email-progress').style.width = '100%';
+    document.getElementById('email-pct').textContent = '100%';
+    refreshHistory();
+  });
+}
+
+function emailPause() {
+  fetch('/email/pause', {method:'POST'}).then(r => r.json()).then(d => {
+    emailPaused = d.paused;
+    document.getElementById('btn-pause').textContent = emailPaused ? '▶  Retomar' : '⏸  Pausar';
+    setStatus(emailPaused ? 'PAUSADO' : 'EXECUTANDO', emailPaused ? 'amber' : 'green');
+  });
+}
+
+function emailStop() {
+  fetch('/email/stop', {method:'POST'});
+  document.getElementById('btn-pause').disabled = true;
+  setStatus('PARANDO...', 'amber');
+}
+
+function emailReset() {
+  clearLog('email-log');
+  ['m-total','m-sent','m-failed','m-skip','m-noemail'].forEach(id =>
+    document.getElementById(id).textContent = '0'
+  );
+  document.getElementById('email-progress').style.width = '0%';
+  document.getElementById('email-pct').textContent = '0%';
+  document.getElementById('email-counter').textContent = '0 / 0 enviados';
+  setStatus('', '');
+  setBtns('idle');
+}
+
+function setBtns(state) {
+  emailState = state;
+  const btnStart = document.getElementById('btn-start');
+  const btnPause = document.getElementById('btn-pause');
+  const btnStop  = document.getElementById('btn-stop');
+
+  if (state === 'running') {
+    btnStart.disabled = true;
+    btnPause.disabled = false;
+    btnStop.disabled  = false;
+    btnStop.textContent = '■  Parar';
+    btnStop.onclick = emailStop;
+    emailPaused = false;
+    btnPause.textContent = '⏸  Pausar';
+  } else if (state === 'stopped') {
+    btnStart.disabled = true;
+    btnPause.disabled = true;
+    btnStop.disabled  = false;
+    btnStop.textContent = '↺  Nova Campanha';
+    btnStop.onclick = emailReset;
+  } else {
+    btnStart.disabled = false;
+    btnPause.disabled = true;
+    btnStop.disabled  = true;
+    btnStop.textContent = '■  Parar';
+    btnStop.onclick = emailStop;
+    emailPaused = false;
+    btnPause.textContent = '⏸  Pausar';
+  }
+}
+
+function refreshHistory() {
+  fetch('/email/history').then(r => r.json()).then(rows => {
+    // Campanhas
+    const tb = document.getElementById('history-body');
+    if (!rows.length) {
+      tb.innerHTML = '<tr><td colspan="6" class="muted center">Nenhuma campanha ainda.</td></tr>';
+    } else {
+      tb.innerHTML = rows.map(c => `
+        <tr>
+          <td class="mono small">${c.campaign_id.slice(-16)}</td>
+          <td>${c.total||0}</td>
+          <td class="green">${c.sent||0}</td>
+          <td class="red">${c.failed||0}</td>
+          <td>${c.completed_at ? 'Concluída' : 'Em andamento'}</td>
+          <td><button class="btn-ghost small green" onclick="loadSends('${c.campaign_id}')">Ver</button></td>
+        </tr>`).join('');
+    }
+    // Totais para aba MÉTRICAS
+    const tot    = rows.reduce((a,c) => a + (c.total||0),   0);
+    const sent   = rows.reduce((a,c) => a + (c.sent||0),    0);
+    const failed = rows.reduce((a,c) => a + (c.failed||0),  0);
+    const bounce = rows.reduce((a,c) => a + (c.bounced||0), 0);
+    document.getElementById('mm-total').textContent   = rows.length;
+    document.getElementById('mm-sent').textContent    = sent;
+    document.getElementById('mm-failed').textContent  = failed;
+    document.getElementById('mm-bounced').textContent = bounce;
+  });
+}
+
+function loadSends(campaignId) {
+  document.getElementById('sends-section').style.display = 'block';
+  document.getElementById('sends-campaign-label').textContent = 'Carregando...';
+  document.getElementById('sends-body').innerHTML =
+    '<tr><td colspan="5" class="muted center">Carregando...</td></tr>';
+
+  fetch(`/email/history/${campaignId}`).then(r => r.json()).then(rows => {
+    document.getElementById('sends-campaign-label').textContent =
+      `Campanha: ${campaignId.slice(-20)} — ${rows.length} registro(s)`;
+
+    const statusColor = {sent:'green', failed:'red', skipped:'amber', no_email:'amber', bounced:'wz'};
+    const statusLabel = {sent:'Enviado', failed:'Falha', skipped:'Pulado', no_email:'Sem e-mail', bounced:'Retorno'};
+
+    document.getElementById('sends-body').innerHTML = rows.length
+      ? rows.map(r => `
+          <tr>
+            <td>${r.cliente || '—'}</td>
+            <td class="mono small">${r.email || '—'}</td>
+            <td class="${statusColor[r.status]||''}">${statusLabel[r.status]||r.status}</td>
+            <td>${r.bounced ? '<span class="amber">Sim</span>' : '—'}</td>
+            <td class="mono small muted">${(r.sent_at||'').slice(11,19)}</td>
+          </tr>`).join('')
+      : '<tr><td colspan="5" class="muted center">Sem registros.</td></tr>';
+  });
+}
+
+function setExcelPath(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const status = document.getElementById('excel-status');
+  const fd = new FormData();
+  fd.append('file', file);
+  status.textContent = 'Enviando arquivo...';
+  fetch('/email/upload-excel', { method: 'POST', body: fd })
+    .then(r => r.json())
+    .then(d => {
+      if (d.error) { status.textContent = '⚠ ' + d.error; return; }
+      document.getElementById('cfg-excel').value = d.path;
+      status.textContent = '✓ ' + d.name + ' carregado.';
+    })
+    .catch(() => { status.textContent = '⚠ Erro ao enviar.'; });
+}
+</script>
+{% endblock %}

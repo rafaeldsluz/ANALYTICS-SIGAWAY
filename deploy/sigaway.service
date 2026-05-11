@@ -1,0 +1,23 @@
+[Unit]
+Description=Sigaway Agent Web Platform
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/opt/sigaway
+Environment="PATH=/opt/sigaway/venv/bin"
+ExecStart=/opt/sigaway/venv/bin/gunicorn \
+    -w 2 \
+    -b 127.0.0.1:5000 \
+    --timeout 300 \
+    --keep-alive 5 \
+    --log-level info \
+    --access-logfile /var/log/sigaway/access.log \
+    --error-logfile  /var/log/sigaway/error.log \
+    web_main:app
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

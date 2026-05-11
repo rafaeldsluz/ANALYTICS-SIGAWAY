@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sigaway Agent</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<div class="layout">
+
+  <!-- ── Sidebar ─────────────────────────────────────────────────────── -->
+  <aside class="sidebar">
+    <div class="logo-wrap">
+      <span class="logo-text">SIGAWAY</span>
+    </div>
+    <div class="nav-section-label">Módulos</div>
+    <nav>
+      <a href="/email"    class="nav-item {% if active=='email'    %}active green{% endif %}">
+        <span style="font-size:14px">📧</span> DISPARO E-MKT
+      </a>
+      <a href="/whatsapp" class="nav-item {% if active=='whatsapp' %}active wz{% endif %}">
+        <span style="font-size:14px">💬</span> DISPARO WHATSAPP
+      </a>
+      <a href="/leads"    class="nav-item {% if active=='leads'    %}active leads{% endif %}">
+        <span style="font-size:14px">🎯</span> GERADOR DE LEADS
+      </a>
+      <a href="/sdr"      class="nav-item {% if active=='sdr'           %}active sdr{% endif %}">
+        <span style="font-size:14px">🤖</span> SDR AGENT
+      </a>
+      <a href="/sdr/dashboard" class="nav-item {% if active=='sdr-dashboard' %}active sdr{% endif %}" style="padding-left:28px;font-size:11px">
+        <span style="font-size:12px">📊</span> DASHBOARD
+      </a>
+    </nav>
+    <div class="sidebar-footer">
+      <div class="status-card">
+        <span id="status-dot" class="dot amber">●</span>
+        <span id="status-text">AGUARDANDO</span>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ── Conteúdo ────────────────────────────────────────────────────── -->
+  <div class="main-wrap">
+    <div class="topbar">
+      <span class="page-title">{% block page_title %}{% endblock %}</span>
+    </div>
+    <div class="topbar-line
+      {%- if active=='email'    %} email-line
+      {%- elif active=='whatsapp' %} wz-line
+      {%- elif active=='leads'  %} leads-line
+      {%- elif active=='sdr'    %} sdr-line
+      {%- endif %}"></div>
+    <main class="page-content">
+      {% block content %}{% endblock %}
+    </main>
+  </div>
+
+</div>
+
+<style>
+  .topbar-line          { height: 2px; }
+  .topbar-line.email-line  { background: linear-gradient(90deg, var(--green),  transparent); opacity: .5; }
+  .topbar-line.wz-line     { background: linear-gradient(90deg, var(--wz),     transparent); opacity: .5; }
+  .topbar-line.leads-line  { background: linear-gradient(90deg, var(--leads),  transparent); opacity: .5; }
+  .topbar-line.sdr-line    { background: linear-gradient(90deg, var(--sdr),    transparent); opacity: .5; }
+</style>
+
+<script src="{{ url_for('static', filename='app.js') }}"></script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

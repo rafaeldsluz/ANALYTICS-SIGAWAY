@@ -1,0 +1,422 @@
+{% extends "base.html" %}
+{% block page_title %}SDR AGENT  /  Torre de Controle  —  Carina{% endblock %}
+
+{% block content %}
+<div class="two-col">
+
+  <!-- ── Painel esquerdo ─────────────────────────────────────────────── -->
+  <div class="panel left-panel">
+
+    <div class="sec-header sdr" style="margin-top:4px">CONFIGURAÇÃO n8n</div>
+    <label>URL do n8n<input id="cfg-n8n-url" type="text" value="{{ n8n_url }}" placeholder="http://192.168.x.x:5678"></label>
+    <label>API Key<input id="cfg-api-key" type="password" placeholder="••••••••"></label>
+    <label>Workflow ID<input id="cfg-wf-id" type="text" value="{{ n8n_workflow_id }}" placeholder="Ex: 26 ou Bzt3s9QxIpjdUomX"></label>
+
+    <div class="sdr-btn-row">
+      <button class="btn-ghost sdr" onclick="checkStatus()">Verificar Status</button>
+      <button id="btn-toggle" class="btn-ghost green" onclick="toggleAgent()">▶ Ativar</button>
+    </div>
+
+    <div class="status-card-sdr" id="wf-status-card">
+      <span id="wf-status-dot" class="dot amber">●</span>
+      <span id="wf-status-text" class="mono small">Não verificado</span>
+      <span id="wf-name" class="muted small" style="margin-left:auto"></span>
+    </div>
+
+    <div class="sec-header sdr">WEBHOOK RECEPTOR</div>
+    <p class="hint">Configure este URL como destino do nó HTTP Request no n8n para registrar as conversas.</p>
+
+    <div class="webhook-url-box" id="webhook-url-box" onclick="copyWebhook()">
+      <span id="webhook-url" class="mono small sdr">{{ webhook_url }}</span>
+      <span class="btn-copy">📋 Copiar</span>
+    </div>
+
+    <div class="sec-header sdr">ERROS DE EXECUÇÃO</div>
+    <button class="btn-ghost red" style="width:100%" onclick="fetchErrors()">
+      ⚠ Buscar Erros Recentes do n8n
+    </button>
+    <div id="fetch-errors-msg" class="hint mt-4"></div>
+
+    <div class="sec-header sdr" style="margin-top:24px">FLUXO CARINA  —  N8N</div>
+    <p class="hint">Importe o fluxo SDR diretamente para o seu N8N com um clique.</p>
+    <div id="flow-info-card" class="flow-info-card">
+      <span class="mono small muted">Clique em "Info" para carregar detalhes do fluxo.</span>
+    </div>
+    <div class="sdr-btn-row mt-4">
+      <button class="btn-ghost sdr small" onclick="loadFlowInfo()">ℹ Info</button>
+      <button class="btn-ghost sdr" onclick="showSystemPrompt()">🤖 Ver Carina</button>
+      <button class="btn-ghost green" onclick="importFlow()">📤 Importar</button>
+    </div>
+    <div id="import-msg" class="hint mt-4"></div>
+
+    <div id="carina-modal" class="carina-modal" style="display:none">
+      <div class="carina-modal-inner">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+          <span class="mono small sdr" style="font-weight:700;letter-spacing:1px">SISTEMA — CARINA SDR</span>
+          <button class="btn-ghost red small" onclick="document.getElementById('carina-modal').style.display='none'">✕ Fechar</button>
+        </div>
+        <pre id="carina-prompt" class="carina-prompt">Carregando...</pre>
+      </div>
+    </div>
+
+    <div class="sec-header sdr" style="margin-top:24px">DADOS</div>
+    <div class="sdr-btn-row">
+      <a href="/sdr/export" class="btn-ghost sdr">📥 Exportar CSV</a>
+      <button class="btn-ghost red small" onclick="clearSdr()">🗑 Limpar base</button>
+    </div>
+  </div>
+
+  <!-- ── Painel direito ──────────────────────────────────────────────── -->
+  <div class="panel right-panel">
+    <div class="console-header">
+      <span class="console-title sdr">TORRE DE CONTROLE  —  SDR AGENT</span>
+      <a href="/sdr/dashboard" class="btn-ghost small sdr">📊 Dashboard</a>
+      <button class="btn-ghost small" onclick="clearTable()">Limpar tabela</button>
+    </div>
+
+    <!-- Metric cards -->
+    <div class="metrics-row">
+      <div class="metric-card">
+        <div class="metric-icon">💬</div>
+        <div id="m-conv"  class="metric-val sdr">{{ stats.conversations }}</div>
+        <div class="metric-lbl">CONVERSAS</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-icon">⚠️</div>
+        <div id="m-err"   class="metric-val red">{{ stats.errors }}</div>
+        <div class="metric-lbl">ERROS</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-icon">📅</div>
+        <div id="m-meet"  class="metric-val green">{{ stats.meetings }}</div>
+        <div class="metric-lbl">QUALIFICADOS</div>
+      </div>
+    </div>
+
+    <div class="divider"></div>
+
+    <!-- Tabela de mensagens -->
+    <div class="table-header-row">
+      <span class="mono small muted">HISTÓRICO DE MENSAGENS</span>
+      <span id="live-badge" class="live-badge">● LIVE</span>
+    </div>
+
+    <div class="msg-table-wrap">
+      <table class="msg-table">
+        <thead>
+          <tr>
+            <th>HORA</th>
+            <th>CONTATO</th>
+            <th>DIR</th>
+            <th>TIPO</th>
+            <th>MENSAGEM</th>
+            <th>STATUS</th>
+          </tr>
+        </thead>
+        <tbody id="msg-tbody">
+          {% for m in messages %}
+          <tr class="{{ 'row-converted' if m.keyword_match else ('row-bot' if m.direction == 'out' else 'row-lead') }}">
+            <td class="mono small">{{ m.created_at[-8:] if m.created_at else '' }}</td>
+            <td>{{ (m.nome or '')[:22] }}</td>
+            <td class="center">{{ '→' if m.direction == 'out' else '←' }}</td>
+            <td class="small muted">{{ (m.msg_type or 'text')[:10] }}</td>
+            <td class="msg-content">{{ (m.content or '')[:120] }}</td>
+            <td class="{{ 'green' if m.keyword_match else ('sdr' if m.direction == 'out' else 'muted') }} small">
+              {{ 'QUALIFICADO' if m.keyword_match else ('BOT' if m.direction == 'out' else 'LEAD') }}
+            </td>
+          </tr>
+          {% else %}
+          <tr id="empty-row"><td colspan="6" class="muted center" style="padding:20px">Nenhuma mensagem ainda. Aguardando webhooks do n8n...</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<style>
+  /* SDR-specific structural styles */
+  .sdr-btn-row          { display:flex; gap:8px; margin-bottom:10px; }
+  .sdr-btn-row .btn-ghost { flex:1; text-align:center; }
+
+  .status-card-sdr {
+    background: var(--card); border:1px solid var(--border); border-radius:10px;
+    padding:10px 14px; display:flex; align-items:center; gap:8px;
+    font-size:11px; margin-bottom:4px;
+  }
+
+  .webhook-url-box {
+    background: var(--card); border:1px solid rgba(129,140,248,0.2); border-radius:8px;
+    padding:10px 12px; cursor:pointer; display:flex; align-items:center;
+    justify-content:space-between; gap:8px; margin-bottom:8px;
+    transition: border-color .18s;
+  }
+  .webhook-url-box:hover { border-color: var(--sdr); }
+  .btn-copy { font-size:10px; color: var(--sdr); white-space:nowrap; }
+
+  .metric-icon { font-size:22px; padding-top:12px; text-align:center; }
+
+  .divider { height:1px; background:var(--border); margin:4px 16px 0; }
+  .table-header-row { display:flex; align-items:center; padding:10px 16px 6px; }
+  .live-badge {
+    margin-left:auto; font-family:var(--mono); font-size:9px; font-weight:700;
+    color: var(--sdr); text-shadow: 0 0 8px rgba(129,140,248,0.6);
+    animation: pulse 2s infinite;
+  }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.2} }
+
+  .msg-table-wrap { flex:1; overflow:auto; padding:0 12px 12px; }
+  .msg-table-wrap::-webkit-scrollbar { width:4px; }
+  .msg-table-wrap::-webkit-scrollbar-thumb { background:var(--border2); border-radius:4px; }
+  .msg-table { width:100%; border-collapse:collapse; font-size:11px; }
+  .msg-table th {
+    background:var(--card); color:var(--muted); font-family:var(--mono);
+    font-size:9px; padding:8px 10px; text-align:left; position:sticky; top:0;
+    letter-spacing:1px; text-transform:uppercase;
+  }
+  .msg-table td { padding:6px 10px; border-bottom:1px solid var(--border); }
+  .msg-table tr:hover td { background:rgba(255,255,255,0.02); }
+  .msg-content { max-width:320px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+
+  .row-converted td { color: var(--green); }
+  .row-bot       td { color: var(--sdr-bright); }
+  .row-lead      td { color: var(--text); }
+
+  .flow-info-card {
+    background: var(--card); border:1px solid var(--border); border-radius:8px;
+    padding:10px 12px; font-size:11px; min-height:38px; display:flex;
+    flex-direction:column; gap:3px;
+  }
+
+  .carina-modal {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.75); z-index:1000;
+    display: flex; align-items: center; justify-content: center; padding: 20px;
+  }
+  .carina-modal-inner {
+    background: var(--surface); border:1px solid var(--sdr-dim);
+    border-radius: 14px; padding: 20px; width: 100%; max-width: 760px;
+    max-height: 80vh; display: flex; flex-direction: column;
+    box-shadow: 0 0 40px rgba(129,140,248,0.15);
+  }
+  .carina-prompt {
+    flex: 1; overflow-y: auto; font-family: var(--mono); font-size: 11px;
+    line-height: 1.7; color: var(--text-sec); white-space: pre-wrap;
+    word-break: break-word; background: #040709; border-radius: 8px;
+    padding: 14px; border: 1px solid var(--border);
+  }
+  .carina-prompt::-webkit-scrollbar { width: 4px; }
+  .carina-prompt::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 4px; }
+</style>
+
+<script>
+let wfActive = null;
+let sdrStream = null;
+
+// ── SSE: conecta ao feed em tempo real ───────────────────────────────────────
+function connectSSE() {
+  if (sdrStream) sdrStream.close();
+  sdrStream = new EventSource('/sdr/stream');
+
+  sdrStream.addEventListener('message', e => {
+    const d = JSON.parse(e.data);
+    prependRow(d);
+    updateStats(d.stats);
+  });
+
+  sdrStream.addEventListener('error_update', e => {
+    const d = JSON.parse(e.data);
+    updateStats(d.stats);
+  });
+
+  sdrStream.onerror = () => {
+    setTimeout(connectSSE, 3000); // reconecta automaticamente
+  };
+}
+
+function prependRow(d) {
+  const empty = document.getElementById('empty-row');
+  if (empty) empty.remove();
+
+  const tbody = document.getElementById('msg-tbody');
+  const cls   = d.keyword ? 'row-converted' : (d.direction === 'out' ? 'row-bot' : 'row-lead');
+  const dir   = d.direction === 'out' ? '→' : '←';
+  const status = d.keyword ? 'QUALIFICADO' : (d.direction === 'out' ? 'BOT' : 'LEAD');
+  const statusClass = d.keyword ? 'green' : (d.direction === 'out' ? 'sdr' : 'muted');
+
+  const tr = document.createElement('tr');
+  tr.className = cls;
+  tr.innerHTML = `
+    <td class="mono small">${d.hora}</td>
+    <td>${(d.nome||'').substring(0,22)}</td>
+    <td class="center">${dir}</td>
+    <td class="small muted">${(d.msg_type||'text').substring(0,10)}</td>
+    <td class="msg-content">${(d.content||'').substring(0,120)}</td>
+    <td class="${statusClass} small">${status}</td>
+  `;
+  tbody.insertBefore(tr, tbody.firstChild);
+
+  // Limita tabela a 500 linhas
+  while (tbody.rows.length > 500) tbody.deleteRow(-1);
+}
+
+function updateStats(s) {
+  if (!s) return;
+  document.getElementById('m-conv').textContent = s.conversations || 0;
+  document.getElementById('m-err').textContent  = s.errors || 0;
+  document.getElementById('m-meet').textContent = s.meetings || 0;
+}
+
+// ── Controles n8n ─────────────────────────────────────────────────────────────
+function _n8nCfg() {
+  return {
+    n8n_url:     document.getElementById('cfg-n8n-url').value.trim(),
+    workflow_id: document.getElementById('cfg-wf-id').value.trim(),
+    api_key:     document.getElementById('cfg-api-key').value.trim(),
+  };
+}
+
+function checkStatus() {
+  const cfg = _n8nCfg();
+  if (!cfg.n8n_url || !cfg.workflow_id) return alert('Preencha URL do n8n e Workflow ID.');
+
+  document.getElementById('wf-status-text').textContent = 'Verificando...';
+  document.getElementById('wf-status-dot').className = 'dot amber';
+
+  fetch('/sdr/check-status', {
+    method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(cfg),
+  }).then(r => r.json()).then(d => {
+    if (d.error) { alert('Erro: ' + d.error); return; }
+    wfActive = d.active;
+    document.getElementById('wf-status-dot').className  = d.active ? 'dot green' : 'dot red';
+    document.getElementById('wf-status-text').textContent = d.active ? 'ATIVO' : 'PAUSADO';
+    document.getElementById('wf-name').textContent = d.name || '';
+    document.getElementById('btn-toggle').textContent = d.active ? '⏸ Pausar' : '▶ Ativar';
+    document.getElementById('btn-toggle').className = d.active ? 'btn-ghost amber' : 'btn-ghost green';
+  });
+}
+
+function toggleAgent() {
+  const cfg    = _n8nCfg();
+  const target = !(wfActive === true);
+  fetch('/sdr/toggle', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({...cfg, active: target}),
+  }).then(r => r.json()).then(d => {
+    if (d.error) { alert('Erro: ' + d.error); return; }
+    wfActive = d.active;
+    document.getElementById('wf-status-dot').className  = d.active ? 'dot green' : 'dot red';
+    document.getElementById('wf-status-text').textContent = d.active ? 'ATIVO' : 'PAUSADO';
+    document.getElementById('btn-toggle').textContent = d.active ? '⏸ Pausar' : '▶ Ativar';
+    document.getElementById('btn-toggle').className = d.active ? 'btn-ghost amber' : 'btn-ghost green';
+  });
+}
+
+function fetchErrors() {
+  const cfg = _n8nCfg();
+  if (!cfg.n8n_url || !cfg.workflow_id) return alert('Preencha URL e Workflow ID.');
+  const msg = document.getElementById('fetch-errors-msg');
+  msg.textContent = 'Buscando...';
+
+  fetch('/sdr/fetch-errors', {
+    method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(cfg),
+  }).then(r => r.json()).then(d => {
+    if (d.error) { msg.textContent = 'Erro: ' + d.error; return; }
+    msg.textContent = `${d.imported} erros importados.`;
+    updateStats(d.stats);
+  });
+}
+
+function copyWebhook() {
+  const url = document.getElementById('webhook-url').textContent;
+  navigator.clipboard.writeText(url).then(() => {
+    document.querySelector('.btn-copy').textContent = '✓ Copiado!';
+    setTimeout(() => document.querySelector('.btn-copy').textContent = '📋 Copiar', 2000);
+  });
+}
+
+function clearTable() {
+  document.getElementById('msg-tbody').innerHTML =
+    '<tr id="empty-row"><td colspan="6" class="muted center" style="padding:20px">Tabela limpa.</td></tr>';
+}
+
+function clearSdr() {
+  if (!confirm('Remover TODAS as conversas, mensagens e erros da base?')) return;
+  fetch('/sdr/clear', {method:'POST'}).then(() => {
+    clearTable();
+    updateStats({conversations:0, errors:0, meetings:0});
+  });
+}
+
+// ── Fluxo N8N ─────────────────────────────────────────────────────────────────
+let _cachedPrompt = '';
+
+function loadFlowInfo() {
+  const card = document.getElementById('flow-info-card');
+  card.innerHTML = '<span class="mono small muted">Carregando...</span>';
+  fetch('/sdr/flow-info').then(r => r.json()).then(d => {
+    if (d.error) {
+      card.innerHTML = `<span class="red small">${d.error}</span>`;
+      return;
+    }
+    _cachedPrompt = d.system_prompt || '';
+    card.innerHTML = `
+      <span class="mono small sdr" style="font-weight:700">${d.name}</span>
+      <span class="muted small">${d.node_count} nós &nbsp;•&nbsp; Agente IA: ${d.has_ai_agent ? '<span class="green">✓ Carina</span>' : '—'}</span>
+    `;
+  }).catch(() => {
+    card.innerHTML = '<span class="red small">Erro ao ler o arquivo.</span>';
+  });
+}
+
+function showSystemPrompt() {
+  if (_cachedPrompt) {
+    document.getElementById('carina-prompt').textContent = _cachedPrompt;
+    document.getElementById('carina-modal').style.display = 'flex';
+    return;
+  }
+  fetch('/sdr/flow-info').then(r => r.json()).then(d => {
+    _cachedPrompt = d.system_prompt || '(prompt não encontrado)';
+    document.getElementById('carina-prompt').textContent = _cachedPrompt;
+    document.getElementById('carina-modal').style.display = 'flex';
+  });
+}
+
+function importFlow() {
+  const cfg = _n8nCfg();
+  if (!cfg.n8n_url) return alert('Configure a URL do n8n primeiro.');
+  const msg = document.getElementById('import-msg');
+  msg.style.color = 'var(--muted)';
+  msg.textContent = 'Importando fluxo para o N8N...';
+
+  fetch('/sdr/import-flow', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(cfg),
+  }).then(r => r.json()).then(d => {
+    if (d.error) {
+      msg.style.color = 'var(--red)';
+      msg.textContent = '✕ ' + d.error;
+      return;
+    }
+    msg.style.color = 'var(--green)';
+    msg.textContent = `✓ Importado! ID: ${d.workflow_id}`;
+    document.getElementById('cfg-wf-id').value = d.workflow_id;
+  }).catch(e => {
+    msg.style.color = 'var(--red)';
+    msg.textContent = '✕ Erro de rede.';
+  });
+}
+
+// Fecha modal ao clicar fora
+document.getElementById('carina-modal').addEventListener('click', function(e) {
+  if (e.target === this) this.style.display = 'none';
+});
+
+// Inicia SSE ao carregar
+connectSSE();
+loadFlowInfo();
+</script>
+{% endblock %}
