@@ -156,37 +156,68 @@ async def _wait_for_charts(page, timeout_ms: int = 30_000) -> None:
         logger.warning("Timeout aguardando gráficos. Capturando estado atual.")
 
 
-async def _set_period_week(page, timeout_ms: int) -> None:
+async def _set_period(
+    page,
+    period_type: str = "PREV_MONTH",
+    date_start: str = "",
+    date_end: str = "",
+    timeout_ms: int = 60_000,
+) -> None:
     """
-    Após selecionar a empresa, garante que o período seja os últimos 7 dias (WEEK).
-    Extrai o companyId da URL atual e renavega com periodType=WEEK.
+    Aplica filtro de período após selecionar a empresa.
+
+    period_type:
+      'WEEK'       — últimos 7 dias (parâmetro nativo do Sigaway)
+      'PREV_MONTH' — mês anterior completo (1º ao último dia, auto-calculado)
+      'CUSTOM'     — datas explícitas via date_start / date_end (YYYY-MM-DDTHH:MM:SS)
     """
+    from datetime import timedelta
+    import calendar
+
     current_url = page.url
     if "companyId" not in current_url:
-        logger.warning("companyId não encontrado na URL — filtro WEEK não aplicado.")
+        logger.warning("companyId não encontrado na URL — filtro de período não aplicado.")
         return
 
     parsed = urlparse(current_url)
     params = parse_qs(parsed.query, keep_blank_values=True)
-    params["periodType"] = ["WEEK"]
+
+    if period_type == "WEEK":
+        params["periodType"] = ["WEEK"]
+        params.pop("dateStart", None)
+        params.pop("dateEnd", None)
+        log_label = "últimos 7 dias (WEEK)"
+    else:
+        params["periodType"] = ["CUSTOM"]
+        if period_type == "PREV_MONTH":
+            today = datetime.now()
+            first_this = today.replace(day=1)
+            last_prev = first_this - timedelta(days=1)
+            first_prev = last_prev.replace(day=1)
+            date_start = first_prev.strftime("%Y-%m-%dT00:00:00")
+            date_end   = last_prev.strftime("%Y-%m-%dT23:59:59")
+            log_label  = f"mês anterior ({first_prev.strftime('%d/%m/%Y')} → {last_prev.strftime('%d/%m/%Y')})"
+        else:
+            log_label = f"personalizado ({date_start} → {date_end})"
+        params["dateStart"] = [date_start]
+        params["dateEnd"]   = [date_end]
+
     new_query = urlencode({k: v[0] for k, v in params.items()})
     new_url = urlunparse(parsed._replace(query=new_query))
 
     if new_url == current_url:
-        logger.debug("Período WEEK já aplicado na URL.")
+        logger.debug("Período já aplicado na URL.")
         return
 
-    logger.info("Aplicando filtro: últimos 7 dias (WEEK).")
+    logger.info(f"Aplicando filtro: {log_label}.")
     await page.goto(new_url, wait_until="domcontentloaded", timeout=timeout_ms)
 
-    # Aguarda a rede estabilizar após a navegação antes de verificar os dados
     try:
         await page.wait_for_load_state("networkidle", timeout=15_000)
-        logger.debug("Rede estabilizada após navegar para Torre de Controle (WEEK).")
+        logger.debug("Rede estabilizada após aplicar período.")
     except PlaywrightTimeout:
-        logger.warning("Network idle timeout após navegar para WEEK — continuando com delay fixo.")
+        logger.warning("Network idle timeout após aplicar período — continuando com delay fixo.")
 
-    # Delay de 5 s para garantir renderização completa dos dados na tela
     logger.debug("Aguardando 5s para renderização dos dados da Torre de Controle...")
     await page.wait_for_timeout(5_000)
 
@@ -403,14 +434,18 @@ async def capture_torre_de_controle(
     username: str,
     password: str,
     cliente: str,
+    period_type: str = "PREV_MONTH",
+    date_start: str = "",
+    date_end: str = "",
     timeout_ms: int = 60_000,
 ) -> str:
     """
     Fluxo completo:
       1. Login no Sigaway
       2. Busca a empresa pelo nome no campo de pesquisa
-      3. Aguarda gráficos circulares da Torre de Controle
-      4. Captura screenshot full-page
+      3. Aplica filtro de período (WEEK / PREV_MONTH / CUSTOM)
+      4. Aguarda gráficos circulares da Torre de Controle
+      5. Captura screenshot full-page
 
     Retorna o caminho absoluto do PNG gerado.
     """
@@ -429,7 +464,7 @@ async def capture_torre_de_controle(
         try:
             await _login(page, url, username, password, timeout_ms)
             await _search_company(page, cliente, timeout_ms)
-            await _set_period_week(page, timeout_ms)
+            await _set_period(page, period_type, date_start, date_end, timeout_ms)
             await _wait_for_charts(page, timeout_ms=30_000)
 
             await page.screenshot(path=str(output_path), full_page=True)
@@ -451,8 +486,16 @@ async def capture_torre_de_controle(
     return str(output_path)
 
 
-def run_capture(url: str, username: str, password: str, cliente: str) -> str:
+def run_capture(
+    url: str,
+    username: str,
+    password: str,
+    cliente: str,
+    period_type: str = "PREV_MONTH",
+    date_start: str = "",
+    date_end: str = "",
+) -> str:
     """Wrapper síncrono."""
     return asyncio.run(
-        capture_torre_de_controle(url, username, password, cliente)
+        capture_torre_de_controle(url, username, password, cliente, period_type, date_start, date_end)
     )

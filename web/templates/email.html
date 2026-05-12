@@ -26,10 +26,30 @@
       <label>Senha do e-mail<input id="cfg-smtp-pass" type="password" value="{{ smtp_pass }}"></label>
 
       <div class="sec-header green">DISPARO</div>
-      <label>Assunto
-        <input id="cfg-subject" type="text" value="VOCE ADIQUIRIU UM IMPLEMENTO COM A LIBRELATO?">
-      </label>
       <label>CC (opcional)<input id="cfg-cc" type="text" placeholder="gerencia@empresa.com"></label>
+
+      <div class="sec-header green" style="margin-top:14px">PERÍODO DA SCREENSHOT</div>
+      <p class="hint">Qual período de dados a imagem do Sigaway deve mostrar.</p>
+      <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:8px">
+        <label style="display:flex;align-items:center;gap:8px;font-weight:normal">
+          <input type="radio" name="period" value="PREV_MONTH" checked onchange="toggleCustomDates()">
+          Mês anterior completo (auto)
+        </label>
+        <label style="display:flex;align-items:center;gap:8px;font-weight:normal">
+          <input type="radio" name="period" value="WEEK" onchange="toggleCustomDates()">
+          Últimos 7 dias
+        </label>
+        <label style="display:flex;align-items:center;gap:8px;font-weight:normal">
+          <input type="radio" name="period" value="CUSTOM" onchange="toggleCustomDates()">
+          Personalizado
+        </label>
+      </div>
+      <div id="custom-dates" style="display:none">
+        <div class="interval-row">
+          <label style="flex:1">De<input id="cfg-date-start" type="date"></label>
+          <label style="flex:1">Até<input id="cfg-date-end" type="date"></label>
+        </div>
+      </div>
 
       <div class="sec-header green" style="margin-top:14px">INTERVALO ENTRE DISPAROS</div>
       <p class="hint">Tempo de espera aleatório entre cada e-mail enviado.</p>
@@ -58,9 +78,12 @@
 
     <!-- E-MAIL -->
     <div class="tab-content" id="tab-email">
-      <div class="sec-header green">CORPO DO E-MAIL</div>
+      <div class="sec-header green">ASSUNTO</div>
+      <label><input id="cfg-subject" type="text" value="VOCE ADIQUIRIU UM IMPLEMENTO COM A LIBRELATO?" style="width:100%"></label>
+
+      <div class="sec-header green" style="margin-top:10px">CORPO DO E-MAIL</div>
       <p class="hint">Use [SCREENSHOT] onde a imagem deve aparecer no corpo.</p>
-      <textarea id="cfg-body" rows="16">Sabe aquele implemento que voce adiquiriu com a Librelato, ele pode te contar como está sendo utilizado!
+      <textarea id="cfg-body" rows="14">Sabe aquele implemento que voce adiquiriu com a Librelato, ele pode te contar como está sendo utilizado!
 
 Nos últimos 30 dias, parte da sua frota operou abaixo do padrão recomendado.
 
@@ -203,7 +226,20 @@ function updateEmailEta() {
     `~${avg}s de média entre envios · 100 e-mails ≈ ${eta}`;
 }
 
+function toggleCustomDates() {
+  const period = document.querySelector('input[name="period"]:checked')?.value;
+  document.getElementById('custom-dates').style.display = period === 'CUSTOM' ? '' : 'none';
+}
+
 function emailStart() {
+  const period    = document.querySelector('input[name="period"]:checked')?.value || 'PREV_MONTH';
+  const dateStart = document.getElementById('cfg-date-start').value;
+  const dateEnd   = document.getElementById('cfg-date-end').value;
+
+  if (period === 'CUSTOM' && (!dateStart || !dateEnd)) {
+    return alert('Preencha as datas de início e fim para o período personalizado.');
+  }
+
   const cfg = {
     url:          document.getElementById('cfg-url').value.trim(),
     username:     document.getElementById('cfg-user').value.trim(),
@@ -217,6 +253,9 @@ function emailStart() {
     interval_min: parseInt(document.getElementById('cfg-imin').value) || 30,
     interval_max: parseInt(document.getElementById('cfg-imax').value) || 90,
     skip_sent:    document.getElementById('cfg-skip-sent').checked,
+    period_type:  period,
+    date_start:   dateStart ? dateStart + 'T00:00:00' : '',
+    date_end:     dateEnd   ? dateEnd   + 'T23:59:59' : '',
   };
   if (!cfg.url || !cfg.username || !cfg.password) {
     return alert('Preencha URL, usuário e senha do Sigaway.');

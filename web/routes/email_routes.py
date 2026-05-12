@@ -262,7 +262,12 @@ def _run_email_campaign(cfg: dict, stream_id: str, stop, running):
 
             try:
                 _push("  Capturando screenshot...")
-                shot = run_capture(cfg["url"], cfg["username"], cfg["password"], cliente)
+                shot = run_capture(
+                    cfg["url"], cfg["username"], cfg["password"], cliente,
+                    period_type=cfg.get("period_type", "PREV_MONTH"),
+                    date_start=cfg.get("date_start", ""),
+                    date_end=cfg.get("date_end", ""),
+                )
 
                 _push(f"  Enviando para {email}" + (f"  CC: {cc}" if cc else "") + "...")
                 send_email(
