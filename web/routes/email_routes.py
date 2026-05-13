@@ -21,7 +21,7 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 DEFAULT_EXCEL = Path(__file__).parent.parent.parent / "disparo e-mkt.xlsx"
 
 # Estado global da campanha de e-mail
-_campaign: dict = {"id": None, "stop": None, "running": None, "thread": None}
+_campaign: dict = {"id": None, "db_id": None, "stop": None, "running": None, "thread": None}
 
 
 @bp.get("/")
@@ -84,14 +84,26 @@ def start():
     _campaign["thread"] = t
     t.start()
 
-    return jsonify({"stream_id": stream_id})
+    return jsonify({"stream_id": stream_id, "db_id": None})
 
 
 @bp.get("/status")
 def status():
     t = _campaign.get("thread")
     running = bool(t and t.is_alive())
-    return jsonify({"running": running, "stream_id": _campaign.get("id")})
+    return jsonify({
+        "running": running,
+        "stream_id": _campaign.get("id"),
+        "db_id": _campaign.get("db_id"),
+    })
+
+
+@bp.post("/finish/<campaign_id>")
+def finish_campaign_route(campaign_id: str):
+    from execution.email_db import init_db, finish_campaign
+    init_db()
+    finish_campaign(campaign_id)
+    return jsonify({"ok": True})
 
 
 @bp.post("/stop")
@@ -212,6 +224,7 @@ def _run_email_campaign(cfg: dict, stream_id: str, stop, running):
 
     init_db()
     campaign_id = f"em_{_dt.now().strftime('%Y%m%d_%H%M%S')}_{_uuid.uuid4().hex[:6]}"
+    _campaign["db_id"] = campaign_id
 
     skip_sent = cfg.get("skip_sent", True)
     already_sent = get_all_sent_emails() if skip_sent else set()

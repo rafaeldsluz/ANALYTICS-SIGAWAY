@@ -138,7 +138,13 @@ Ou fale diretamente com um de nossos especialistas e receba uma análise persona
               <td class="green">{{ c.sent or 0 }}</td>
               <td class="red">{{ c.failed or 0 }}</td>
               <td>{{ "Concluída" if c.completed_at else "Em andamento" }}</td>
-              <td><button class="btn-ghost small green" onclick="loadSends('{{ c.campaign_id }}')">Ver</button></td>
+              <td style="display:flex;gap:4px;flex-wrap:wrap">
+                <button class="btn-ghost small green" onclick="loadSends('{{ c.campaign_id }}')">Ver</button>
+                {% if not c.completed_at %}
+                <button class="btn-ghost small amber" onclick="resumeCampaign('{{ c.campaign_id }}')">Continuar</button>
+                <button class="btn-ghost small red" onclick="finishCampaign('{{ c.campaign_id }}')">Encerrar</button>
+                {% endif %}
+              </td>
             </tr>
             {% else %}
             <tr><td colspan="6" class="muted center">Nenhuma campanha ainda.</td></tr>
@@ -365,22 +371,30 @@ function setBtns(state) {
 
 function refreshHistory() {
   fetch('/email/history').then(r => r.json()).then(rows => {
-    // Campanhas
     const tb = document.getElementById('history-body');
     if (!rows.length) {
       tb.innerHTML = '<tr><td colspan="6" class="muted center">Nenhuma campanha ainda.</td></tr>';
     } else {
-      tb.innerHTML = rows.map(c => `
+      tb.innerHTML = rows.map(c => {
+        const inProgress = !c.completed_at;
+        const extraBtns  = inProgress
+          ? `<button class="btn-ghost small amber" onclick="resumeCampaign('${c.campaign_id}')">Continuar</button>
+             <button class="btn-ghost small red"   onclick="finishCampaign('${c.campaign_id}')">Encerrar</button>`
+          : '';
+        return `
         <tr>
           <td class="mono small">${c.campaign_id.slice(-16)}</td>
           <td>${c.total||0}</td>
           <td class="green">${c.sent||0}</td>
           <td class="red">${c.failed||0}</td>
-          <td>${c.completed_at ? 'Concluída' : 'Em andamento'}</td>
-          <td><button class="btn-ghost small green" onclick="loadSends('${c.campaign_id}')">Ver</button></td>
-        </tr>`).join('');
+          <td>${inProgress ? 'Em andamento' : 'Concluída'}</td>
+          <td style="display:flex;gap:4px;flex-wrap:wrap">
+            <button class="btn-ghost small green" onclick="loadSends('${c.campaign_id}')">Ver</button>
+            ${extraBtns}
+          </td>
+        </tr>`;
+      }).join('');
     }
-    // Totais para aba MÉTRICAS
     const tot    = rows.reduce((a,c) => a + (c.total||0),   0);
     const sent   = rows.reduce((a,c) => a + (c.sent||0),    0);
     const failed = rows.reduce((a,c) => a + (c.failed||0),  0);
@@ -390,6 +404,32 @@ function refreshHistory() {
     document.getElementById('mm-failed').textContent  = failed;
     document.getElementById('mm-bounced').textContent = bounce;
   });
+}
+
+function resumeCampaign(campaignId) {
+  fetch('/email/status').then(r => r.json()).then(d => {
+    if (d.running && d.db_id === campaignId && d.stream_id) {
+      appendLog('email-log', 'Reconectando à campanha em andamento...', 'WARNING');
+      setBtns('running');
+      setStatus('EXECUTANDO', 'green');
+      startEmailSSE(d.stream_id);
+      // Vai para o console
+      document.querySelector('[data-tab="config"]').closest('.tabs')
+        .querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+      document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+    } else {
+      alert('Esta campanha não está mais ativa no servidor.\nUse "Encerrar" para marcar como concluída.');
+    }
+  });
+}
+
+function finishCampaign(campaignId) {
+  if (!confirm('Marcar esta campanha como encerrada?')) return;
+  fetch(`/email/finish/${campaignId}`, {method: 'POST'})
+    .then(r => r.json())
+    .then(d => {
+      if (d.ok) refreshHistory();
+    });
 }
 
 function loadSends(campaignId) {
