@@ -106,6 +106,38 @@ def finish_campaign_route(campaign_id: str):
     return jsonify({"ok": True})
 
 
+@bp.post("/resume/<campaign_id>")
+def resume_campaign(campaign_id: str):
+    global _campaign
+    if _campaign["thread"] and _campaign["thread"].is_alive():
+        return jsonify({"error": "Outra campanha já está em execução."}), 409
+
+    data = request.json or {}
+    stream_id = str(uuid.uuid4())
+
+    stop    = threading.Event()
+    running = threading.Event()
+    running.set()
+
+    _campaign = {
+        "id":      stream_id,
+        "db_id":   campaign_id,
+        "stop":    stop,
+        "running": running,
+        "thread":  None,
+    }
+
+    t = threading.Thread(
+        target=_run_email_campaign_resume,
+        args=(data, stream_id, campaign_id, stop, running),
+        daemon=True,
+    )
+    _campaign["thread"] = t
+    t.start()
+
+    return jsonify({"stream_id": stream_id})
+
+
 @bp.post("/stop")
 def stop():
     if _campaign["stop"]:
@@ -296,6 +328,155 @@ def _run_email_campaign(cfg: dict, stream_id: str, stop, running):
                 _push("  ✓ Enviado.", "SUCCESS")
                 try:
                     Path(shot).unlink(missing_ok=True)
+                except Exception:
+                    pass
+            except Exception as e:
+                errors += 1
+                record_send(campaign_id, cliente, email, "failed", str(e))
+                _push(f"  Erro: {e}", "ERROR")
+
+            _progress(i, total, sent, errors, skipped, no_email)
+
+            if i < total and not stop.is_set():
+                delay = random.randint(
+                    int(cfg.get("interval_min", 30)),
+                    int(cfg.get("interval_max", 90)),
+                )
+                _push(f"  ⏱  Aguardando {delay}s...")
+                for _ in range(delay):
+                    if stop.is_set():
+                        break
+                    running.wait()
+                    time.sleep(1)
+
+        finish_campaign(campaign_id)
+        _push(
+            f"Concluído — Enviados: {sent}  Pulados: {skipped}  "
+            f"Falhas: {errors - no_email}  Sem e-mail: {no_email}",
+            "SUCCESS",
+        )
+
+    except Exception as e:
+        _push(f"Erro crítico: {e}", "ERROR")
+
+    finally:
+        sse.push(stream_id, "done", {
+            "sent": sent, "errors": errors,
+            "skipped": skipped, "no_email": no_email, "total": total,
+        })
+
+
+def _run_email_campaign_resume(cfg: dict, stream_id: str, campaign_id: str, stop, running):
+    import random
+    import time
+    from pathlib import Path as _Path
+    from execution.excel_reader import load_recipients
+    from execution.screenshot   import run_capture
+    from execution.email_db import (
+        init_db, record_send, finish_campaign,
+        get_campaign_sends, get_campaign_stats,
+    )
+    from enviar_email import send_email
+
+    def _push(msg, level="INFO", **extra):
+        sse.push(stream_id, "log", {"msg": msg, "level": level, **extra})
+
+    def _progress(i, total, sent, errors, skipped, no_email):
+        pct = round(i / total * 100) if total else 0
+        sse.push(stream_id, "progress", {
+            "i": i, "total": total, "sent": sent,
+            "errors": errors, "skipped": skipped,
+            "no_email": no_email, "pct": pct,
+        })
+
+    init_db()
+
+    already_done  = get_campaign_sends(campaign_id)
+    done_emails   = {s["email"].lower() for s in already_done if s.get("email")}
+    done_clientes = {s["cliente"] for s in already_done if not s.get("email")}
+
+    stats      = get_campaign_stats(campaign_id)
+    excel_path = cfg.get("excel_path") or stats.get("excel_path", "")
+
+    sent = errors = no_email = skipped = total = 0
+    try:
+        _push(f"Retomando campanha {campaign_id[-20:]}...")
+        _push("Carregando destinatários do Excel...")
+        all_recs = load_recipients(excel_path)
+
+        recs = []
+        for r in all_recs:
+            em = (r.get("email") or "").lower()
+            cl = r.get("cliente", "")
+            if em and em in done_emails:
+                skipped += 1
+            elif not em and cl in done_clientes:
+                skipped += 1
+            else:
+                recs.append(r)
+
+        total = len(recs)
+        _push(f"{len(all_recs)} no Excel — {skipped} já processados, {total} restantes.")
+
+        if total == 0:
+            _push("Todos os destinatários já foram processados.", "WARNING")
+            finish_campaign(campaign_id)
+            sse.push(stream_id, "done", {
+                "sent": 0, "errors": 0, "skipped": skipped, "no_email": 0, "total": 0,
+            })
+            return
+
+        global_cc = cfg.get("cc", "").strip()
+
+        for i, rec in enumerate(recs, 1):
+            while not running.is_set():
+                if stop.is_set():
+                    break
+                time.sleep(0.3)
+
+            if stop.is_set():
+                _push("Campanha interrompida.", "WARNING")
+                break
+
+            cliente = rec["cliente"]
+            email   = rec["email"]
+            cc_list = list(rec.get("cc_list", []))
+            if global_cc and global_cc not in cc_list:
+                cc_list = [global_cc] + cc_list
+            cc = ", ".join(cc_list)
+
+            _push(f"[{i}/{total}]  {cliente}")
+
+            if not email:
+                _push(f"  Sem e-mail para '{cliente}'.", "WARNING")
+                no_email += 1
+                errors   += 1
+                record_send(campaign_id, cliente, "", "no_email")
+                _progress(i, total, sent, errors, skipped, no_email)
+                continue
+
+            try:
+                _push("  Capturando screenshot...")
+                shot = run_capture(
+                    cfg["url"], cfg["username"], cfg["password"], cliente,
+                    period_type=cfg.get("period_type", "PREV_MONTH"),
+                    date_start=cfg.get("date_start", ""),
+                    date_end=cfg.get("date_end", ""),
+                )
+                _push(f"  Enviando para {email}" + (f"  CC: {cc}" if cc else "") + "...")
+                send_email(
+                    to_email=email, subject=cfg["subject"],
+                    corpo=cfg["email_body"], cc_email=cc,
+                    screenshot_path=shot,
+                    smtp_user=cfg["smtp_user"],
+                    smtp_password=cfg["smtp_pass"],
+                )
+                sent += 1
+                done_emails.add(email.lower())
+                record_send(campaign_id, cliente, email, "sent")
+                _push("  ✓ Enviado.", "SUCCESS")
+                try:
+                    _Path(shot).unlink(missing_ok=True)
                 except Exception:
                     pass
             except Exception as e:
