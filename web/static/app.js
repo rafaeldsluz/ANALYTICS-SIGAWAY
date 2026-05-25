@@ -1,3 +1,46 @@
+/* ── Toast notifications ─────────────────────────────────────────────────── */
+let _toastContainer = null;
+function _getToastContainer() {
+  if (!_toastContainer) {
+    _toastContainer = document.createElement('div');
+    _toastContainer.className = 'toast-container';
+    document.body.appendChild(_toastContainer);
+  }
+  return _toastContainer;
+}
+
+function showToast(msg, type = 'info') {
+  const c = _getToastContainer();
+  const t = document.createElement('div');
+  t.className = `toast toast-${type}`;
+  t.textContent = msg;
+  c.appendChild(t);
+  requestAnimationFrame(() => requestAnimationFrame(() => t.classList.add('show')));
+  setTimeout(() => {
+    t.classList.remove('show');
+    setTimeout(() => t.remove(), 300);
+  }, 3500);
+}
+
+/* ── Confirm dialog ──────────────────────────────────────────────────────── */
+function confirmDialog(msg) {
+  return new Promise(resolve => {
+    const overlay = document.getElementById('confirm-overlay');
+    document.getElementById('confirm-msg').textContent = msg;
+    overlay.style.display = 'flex';
+    const yes = document.getElementById('confirm-yes');
+    const no  = document.getElementById('confirm-no');
+    const done = val => {
+      overlay.style.display = 'none';
+      yes.onclick = null;
+      no.onclick  = null;
+      resolve(val);
+    };
+    yes.onclick = () => done(true);
+    no.onclick  = () => done(false);
+  });
+}
+
 /* ── Funções globais compartilhadas ─────────────────────────────────────── */
 
 /**

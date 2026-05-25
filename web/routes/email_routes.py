@@ -1,15 +1,34 @@
 """
 Rotas do módulo E-mail Agent.
 """
+import logging
 import os
 import threading
 import uuid
 from pathlib import Path
 
 from flask import (
-    Blueprint, Response, render_template,
+    Blueprint, Response, redirect, render_template,
     request, jsonify, stream_with_context,
 )
+
+from web.auth     import csrf_protect, login_required
+from web.security import (
+    audit, rate_limit,
+    sanitize_email, sanitize_int, sanitize_str,
+    validate_file_upload, validate_redirect_url,
+)
+
+_log = logging.getLogger("sigaway.email")
+
+# GIF transparente 1×1 — resposta ao pixel de rastreamento
+_PIXEL_GIF = bytes([
+    0x47,0x49,0x46,0x38,0x39,0x61,0x01,0x00,0x01,0x00,
+    0x80,0x00,0x00,0xff,0xff,0xff,0x00,0x00,0x00,0x21,
+    0xf9,0x04,0x00,0x00,0x00,0x00,0x00,0x2c,0x00,0x00,
+    0x00,0x00,0x01,0x00,0x01,0x00,0x00,0x02,0x02,0x44,
+    0x01,0x00,0x3b,
+])
 
 from web.sse import sse
 
@@ -25,6 +44,7 @@ _campaign: dict = {"id": None, "db_id": None, "stop": None, "running": None, "th
 
 
 @bp.get("/")
+@login_required
 def index():
     from execution.email_db import init_db, get_recent_campaigns
     from execution.excel_reader import load_recipients
@@ -46,9 +66,9 @@ def index():
         active="email",
         sigaway_url=os.getenv("SIGAWAY_URL", "https://app.sigaway.com.br"),
         sigaway_user=os.getenv("SIGAWAY_USER", ""),
-        sigaway_pass=os.getenv("SIGAWAY_PASS", "Rafa2205!"),
-        smtp_user=os.getenv("SMTP_USER", "rafael.luz@sigaway.com.br"),
-        smtp_pass=os.getenv("SMTP_PASS", ""),
+        sigaway_pass="",       # nunca expõe senha padrão ao template
+        smtp_user=os.getenv("SMTP_USER", ""),
+        smtp_pass="",          # nunca expõe senha ao template
         default_excel=str(DEFAULT_EXCEL),
         excel_count=excel_count,
         excel_error=excel_error,
@@ -57,12 +77,16 @@ def index():
 
 
 @bp.post("/start")
+@login_required
+@csrf_protect
+@rate_limit(max_requests=5, window_s=60, scope="email_start")
 def start():
     global _campaign
     if _campaign["thread"] and _campaign["thread"].is_alive():
         return jsonify({"error": "Campanha já em execução."}), 409
 
     data = request.json or {}
+    audit("INFO", "CAMPAIGN_START", f"ip={request.remote_addr}")
     stream_id = str(uuid.uuid4())
 
     stop    = threading.Event()
@@ -88,6 +112,7 @@ def start():
 
 
 @bp.get("/status")
+@login_required
 def status():
     t = _campaign.get("thread")
     running = bool(t and t.is_alive())
@@ -99,6 +124,8 @@ def status():
 
 
 @bp.post("/finish/<campaign_id>")
+@login_required
+@csrf_protect
 def finish_campaign_route(campaign_id: str):
     from execution.email_db import init_db, finish_campaign
     init_db()
@@ -107,6 +134,9 @@ def finish_campaign_route(campaign_id: str):
 
 
 @bp.post("/resume/<campaign_id>")
+@login_required
+@csrf_protect
+@rate_limit(max_requests=5, window_s=60, scope="email_resume")
 def resume_campaign(campaign_id: str):
     global _campaign
     if _campaign["thread"] and _campaign["thread"].is_alive():
@@ -139,6 +169,8 @@ def resume_campaign(campaign_id: str):
 
 
 @bp.post("/stop")
+@login_required
+@csrf_protect
 def stop():
     if _campaign["stop"]:
         _campaign["stop"].set()
@@ -148,6 +180,8 @@ def stop():
 
 
 @bp.post("/pause")
+@login_required
+@csrf_protect
 def pause():
     r = _campaign.get("running")
     if not r:
@@ -161,6 +195,7 @@ def pause():
 
 
 @bp.get("/stream/<stream_id>")
+@login_required
 def stream(stream_id):
     return Response(
         stream_with_context(sse.listen(stream_id)),
@@ -173,6 +208,7 @@ def stream(stream_id):
 
 
 @bp.get("/history")
+@login_required
 def history():
     from execution.email_db import init_db, get_recent_campaigns
     init_db()
@@ -181,6 +217,7 @@ def history():
 
 
 @bp.get("/history/<campaign_id>")
+@login_required
 def history_sends(campaign_id: str):
     from execution.email_db import init_db, get_campaign_sends
     init_db()
@@ -188,28 +225,90 @@ def history_sends(campaign_id: str):
     return jsonify(rows)
 
 
+@bp.get("/track/open/<token>")
+def track_open(token: str):
+    from execution.email_db import record_open
+    record_open(
+        token,
+        request.headers.get("User-Agent", ""),
+        request.remote_addr or "",
+    )
+    return Response(
+        _PIXEL_GIF,
+        mimetype="image/gif",
+        headers={"Cache-Control": "no-cache, no-store, must-revalidate", "Pragma": "no-cache"},
+    )
+
+
+@bp.get("/track/click/<token>")
+@rate_limit(max_requests=60, window_s=60, scope="track_click")
+def track_click(token: str):
+    from execution.email_db import record_click
+    from urllib.parse import unquote
+    raw = request.args.get("u", "")
+    if len(raw) > 2048:
+        return Response("URL inválida", status=400)
+    url = unquote(raw)
+    if not validate_redirect_url(url):
+        audit("WARNING", "INVALID_REDIRECT", f"token={token} url={url[:100]}")
+        return Response("Destino não permitido", status=403)
+    record_click(token, url, request.headers.get("User-Agent", ""), request.remote_addr or "")
+    return redirect(url, code=302)
+
+
+@bp.get("/analytics-data")
+@login_required
+def analytics_data():
+    from execution.email_db import init_db, get_analytics_data
+    init_db()
+    return jsonify(get_analytics_data(30))
+
+
+@bp.get("/analytics-detail/<campaign_id>")
+@login_required
+def analytics_detail(campaign_id: str):
+    from execution.email_db import init_db, get_campaign_opens, get_campaign_clicks
+    init_db()
+    return jsonify({
+        "opens":  get_campaign_opens(campaign_id),
+        "clicks": get_campaign_clicks(campaign_id),
+    })
+
+
 @bp.post("/upload-excel")
+@login_required
+@csrf_protect
+@rate_limit(max_requests=10, window_s=60, scope="upload_excel")
 def upload_excel():
     f = request.files.get("file")
-    if not f or not f.filename:
-        return jsonify({"error": "Nenhum arquivo enviado."}), 400
-    safe = Path(f.filename).name
-    dest = UPLOAD_DIR / safe
+    valid, err = validate_file_upload(f)
+    if not valid:
+        audit("WARNING", "UPLOAD_REJECTED", err)
+        return jsonify({"error": err}), 400
+    # Nome gerado por UUID — evita path traversal e colisões
+    safe_name = f"{uuid.uuid4().hex}.xlsx"
+    dest = UPLOAD_DIR / safe_name
     f.save(str(dest))
-    return jsonify({"path": str(dest), "name": safe})
+    audit("INFO", "UPLOAD_OK", f"original={f.filename} saved={safe_name}")
+    return jsonify({"path": str(dest), "name": safe_name, "original": f.filename})
 
 
 @bp.post("/test-email")
+@login_required
+@csrf_protect
+@rate_limit(max_requests=3, window_s=60, scope="test_email")
 def test_email():
-    data = request.json or {}
-    email   = data.get("email", "").strip()
-    subject = data.get("subject", "Teste — Sigaway Agent")
-    body    = data.get("body", "")
-    smtp_user = data.get("smtp_user", "")
-    smtp_pass = data.get("smtp_pass", "")
+    data      = request.json or {}
+    email     = sanitize_email(data.get("email", ""))
+    subject   = sanitize_str(data.get("subject", "Teste — Sigaway Agent"), max_len=200)
+    body      = sanitize_str(data.get("body", ""), max_len=5000)
+    smtp_user = sanitize_str(data.get("smtp_user", ""), max_len=254)
+    smtp_pass = data.get("smtp_pass", "")   # senha não deve sofrer escape HTML
 
-    if not email or "@" not in email:
+    if not email:
         return jsonify({"error": "E-mail inválido."}), 400
+
+    audit("INFO", "TEST_EMAIL_SENT", f"to={email}")
 
     def _run():
         from enviar_email import send_email
@@ -221,8 +320,8 @@ def test_email():
                 smtp_user=smtp_user,
                 smtp_password=smtp_pass,
             )
-        except Exception as e:
-            pass  # Resultado via SSE não aplicável aqui; retornar no response
+        except Exception as exc:
+            _log.error("Erro ao enviar e-mail de teste: %s", exc)
 
     threading.Thread(target=_run, daemon=True).start()
     return jsonify({"ok": True, "msg": f"Enviando teste para {email}..."})
@@ -258,6 +357,8 @@ def _run_email_campaign(cfg: dict, stream_id: str, stop, running):
     campaign_id = f"em_{_dt.now().strftime('%Y%m%d_%H%M%S')}_{_uuid.uuid4().hex[:6]}"
     _campaign["db_id"] = campaign_id
 
+    _tracking_base = os.getenv("TRACKING_BASE_URL", "").rstrip("/")
+
     skip_sent = cfg.get("skip_sent", True)
     already_sent = get_all_sent_emails() if skip_sent else set()
 
@@ -268,7 +369,7 @@ def _run_email_campaign(cfg: dict, stream_id: str, stop, running):
         total = len(recs)
         _push(f"{total} destinatários carregados.")
 
-        start_campaign(campaign_id, cfg.get("excel_path", ""), total)
+        start_campaign(campaign_id, cfg.get("excel_path", ""), total, name=(cfg.get("name") or cfg.get("subject", ""))[:120])
 
         for i, rec in enumerate(recs, 1):
             while not running.is_set():
@@ -314,6 +415,8 @@ def _run_email_campaign(cfg: dict, stream_id: str, stop, running):
                     date_end=cfg.get("date_end", ""),
                 )
 
+                token = _uuid.uuid4().hex
+
                 _push(f"  Enviando para {email}" + (f"  CC: {cc}" if cc else "") + "...")
                 send_email(
                     to_email=email, subject=cfg["subject"],
@@ -321,10 +424,12 @@ def _run_email_campaign(cfg: dict, stream_id: str, stop, running):
                     screenshot_path=shot,
                     smtp_user=cfg["smtp_user"],
                     smtp_password=cfg["smtp_pass"],
+                    tracking_base=_tracking_base,
+                    tracking_token=token,
                 )
                 sent += 1
                 already_sent.add(email.lower())
-                record_send(campaign_id, cliente, email, "sent")
+                record_send(campaign_id, cliente, email, "sent", tracking_token=token)
                 _push("  ✓ Enviado.", "SUCCESS")
                 try:
                     Path(shot).unlink(missing_ok=True)
@@ -390,6 +495,8 @@ def _run_email_campaign_resume(cfg: dict, stream_id: str, campaign_id: str, stop
         })
 
     init_db()
+
+    _tracking_base = os.getenv("TRACKING_BASE_URL", "").rstrip("/")
 
     already_done  = get_campaign_sends(campaign_id)
     done_emails   = {s["email"].lower() for s in already_done if s.get("email")}
@@ -463,6 +570,9 @@ def _run_email_campaign_resume(cfg: dict, stream_id: str, campaign_id: str, stop
                     date_start=cfg.get("date_start", ""),
                     date_end=cfg.get("date_end", ""),
                 )
+                import uuid as _uuid_mod
+                token = _uuid_mod.uuid4().hex
+
                 _push(f"  Enviando para {email}" + (f"  CC: {cc}" if cc else "") + "...")
                 send_email(
                     to_email=email, subject=cfg["subject"],
@@ -470,10 +580,12 @@ def _run_email_campaign_resume(cfg: dict, stream_id: str, campaign_id: str, stop
                     screenshot_path=shot,
                     smtp_user=cfg["smtp_user"],
                     smtp_password=cfg["smtp_pass"],
+                    tracking_base=_tracking_base,
+                    tracking_token=token,
                 )
                 sent += 1
                 done_emails.add(email.lower())
-                record_send(campaign_id, cliente, email, "sent")
+                record_send(campaign_id, cliente, email, "sent", tracking_token=token)
                 _push("  ✓ Enviado.", "SUCCESS")
                 try:
                     _Path(shot).unlink(missing_ok=True)

@@ -11,6 +11,7 @@
       <button class="tab" data-tab="email">E-MAIL</button>
       <button class="tab" data-tab="metrics">MÉTRICAS</button>
       <button class="tab" data-tab="history" onclick="refreshHistory()">HISTÓRICO</button>
+      <button class="tab" data-tab="analytics" onclick="loadAnalytics()">ANALYTICS</button>
     </div>
     <div style="flex:1; overflow-y:auto; padding:4px 16px 16px">
 
@@ -26,6 +27,7 @@
       <label>Senha do e-mail<input id="cfg-smtp-pass" type="password" value="{{ smtp_pass }}"></label>
 
       <div class="sec-header green">DISPARO</div>
+      <label>Nome da campanha<input id="cfg-name" type="text" placeholder="Ex: Campanha Outubro — Librelato"></label>
       <label>CC (opcional)<input id="cfg-cc" type="text" placeholder="gerencia@empresa.com"></label>
 
       <div class="sec-header green" style="margin-top:14px">PERÍODO DA SCREENSHOT</div>
@@ -65,7 +67,7 @@
 
       <div class="sec-header green">PLANILHA EXCEL</div>
       <div class="file-row">
-        <input id="cfg-excel" type="text" value="{{ default_excel }}" readonly style="color:var(--text-muted);font-size:11px;">
+        <input id="cfg-excel" type="text" value="{{ default_excel }}" readonly style="color:var(--text-2);font-size:11px;">
         <label class="btn-file" title="Trocar arquivo">···<input type="file" accept=".xlsx,.xls" onchange="setExcelPath(this)"></label>
       </div>
       {% if excel_error %}
@@ -128,12 +130,12 @@ Ou fale diretamente com um de nossos especialistas e receba uma análise persona
       <div class="history-table-wrap">
         <table class="history-table">
           <thead><tr>
-            <th>ID</th><th>Total</th><th>Enviados</th><th>Falhas</th><th>Status</th><th></th>
+            <th>Campanha</th><th>Total</th><th>Enviados</th><th>Falhas</th><th>Status</th><th></th>
           </tr></thead>
           <tbody id="history-body">
             {% for c in history %}
             <tr>
-              <td class="mono small">{{ c.campaign_id[-16:] }}</td>
+              <td class="small" title="{{ c.campaign_id }}">{{ c.name or c.campaign_id[-16:] }}</td>
               <td>{{ c.total or 0 }}</td>
               <td class="green">{{ c.sent or 0 }}</td>
               <td class="red">{{ c.failed or 0 }}</td>
@@ -169,6 +171,91 @@ Ou fale diretamente com um de nossos especialistas e receba uma análise persona
         </div>
       </div>
     </div>
+    <!-- ANALYTICS -->
+    <div class="tab-content" id="tab-analytics">
+
+      <!-- Filtro por campanha -->
+      <div style="display:flex;align-items:center;gap:8px;margin:6px 0 4px">
+        <label style="font-size:11px;color:var(--text-2);white-space:nowrap;flex-shrink:0;margin:0">Campanha:</label>
+        <select id="an-filter" onchange="anFilterChange()"
+                style="flex:1;background:var(--card);border:1px solid var(--border);color:var(--text);
+                       border-radius:6px;padding:4px 8px;font-size:11px;min-width:0">
+          <option value="">Todas</option>
+        </select>
+        <button class="btn-ghost small" onclick="loadAnalytics()" title="Recarregar">↻</button>
+      </div>
+
+      <div class="sec-header green" style="margin-top:6px">KPIs</div>
+      <div id="analytics-summary" class="metrics-row" style="padding:0;margin-top:6px;flex-wrap:wrap;gap:6px">
+        <div class="metric-card"><div id="an-campaigns" class="metric-val muted">—</div><div class="metric-lbl">CAMPANHAS</div></div>
+        <div class="metric-card"><div id="an-sent"      class="metric-val green">—</div><div class="metric-lbl">ENVIADOS</div></div>
+        <div id="card-opens"  class="metric-card" onclick="anShowDetail('opens')"
+             style="cursor:pointer;border:1px solid transparent;border-radius:var(--radius);transition:border-color .15s"
+             title="Clique para ver quem abriu">
+          <div id="an-opens" class="metric-val" style="color:var(--leads)">—</div>
+          <div class="metric-lbl">ABERTURAS ↗</div>
+        </div>
+        <div id="card-clicks" class="metric-card" onclick="anShowDetail('clicks')"
+             style="cursor:pointer;border:1px solid transparent;border-radius:var(--radius);transition:border-color .15s"
+             title="Clique para ver quem clicou">
+          <div id="an-clicks" class="metric-val amber">—</div>
+          <div class="metric-lbl">CLIQUES ↗</div>
+        </div>
+        <div class="metric-card"><div id="an-openrate"  class="metric-val" style="color:var(--leads)">—%</div><div class="metric-lbl">OPEN RATE</div></div>
+        <div class="metric-card"><div id="an-ctr"       class="metric-val amber">—%</div><div class="metric-lbl">CTR</div></div>
+        <div class="metric-card"><div id="an-ctor"      class="metric-val" style="color:var(--sdr-bright)">—%</div><div class="metric-lbl">CTOR</div></div>
+        <div class="metric-card"><div id="an-bounce"    class="metric-val red">—</div><div class="metric-lbl">BOUNCE</div></div>
+      </div>
+
+      <div class="sec-header green" style="margin-top:12px">RANKING</div>
+      <div class="history-table-wrap" style="max-height:200px">
+        <table class="history-table">
+          <thead><tr>
+            <th>Campanha</th><th>Enviados</th><th>Abertos</th><th>Open%</th><th>Cliques</th><th>CTR%</th><th>CTOR%</th><th></th>
+          </tr></thead>
+          <tbody id="analytics-body">
+            <tr><td colspan="8" class="muted center">Clique em ANALYTICS para carregar.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Detalhe: quem abriu / quem clicou -->
+      <div id="analytics-detail-section" style="display:none;margin-top:12px">
+        <div class="detail-header">
+          <span id="detail-campaign-label" class="hint"></span>
+          <button class="btn-ghost small" onclick="document.getElementById('analytics-detail-section').style.display='none'">✕</button>
+        </div>
+        <div class="detail-tab-bar">
+          <button class="detail-tab-btn active" data-dtab="opens"  onclick="switchDetailTab('opens')">Aberturas</button>
+          <button class="detail-tab-btn"         data-dtab="clicks" onclick="switchDetailTab('clicks')">Cliques</button>
+        </div>
+        <div id="detail-opens-section">
+          <div class="history-table-wrap" style="max-height:200px">
+            <table class="history-table">
+              <thead><tr><th>Empresa</th><th>E-mail</th><th>Horário</th><th>Dispositivo</th></tr></thead>
+              <tbody id="detail-opens-body"></tbody>
+            </table>
+          </div>
+        </div>
+        <div id="detail-clicks-section" style="display:none">
+          <div class="history-table-wrap" style="max-height:200px">
+            <table class="history-table">
+              <thead><tr><th>Empresa</th><th>E-mail</th><th>Horário</th><th>Dispositivo</th></tr></thead>
+              <tbody id="detail-clicks-body"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <div style="margin-top:8px">
+        <canvas id="an-chart" height="140"
+                style="display:none;width:100%;background:var(--card);border-radius:8px;padding:8px;border:1px solid var(--border)"></canvas>
+      </div>
+      <p id="analytics-hint" class="hint" style="margin-top:8px;display:none">
+        Sem dados de rastreamento — defina <code>TRACKING_BASE_URL</code> antes de disparar.
+      </p>
+    </div>
+
     </div><!-- /inner scroll -->
   </div>
 
@@ -243,7 +330,7 @@ function emailStart() {
   const dateEnd   = document.getElementById('cfg-date-end').value;
 
   if (period === 'CUSTOM' && (!dateStart || !dateEnd)) {
-    return alert('Preencha as datas de início e fim para o período personalizado.');
+    return showToast('Preencha as datas de início e fim para o período personalizado.', 'warning');
   }
 
   const cfg = {
@@ -258,13 +345,14 @@ function emailStart() {
     excel_path:   document.getElementById('cfg-excel').value.trim(),
     interval_min: parseInt(document.getElementById('cfg-imin').value) || 30,
     interval_max: parseInt(document.getElementById('cfg-imax').value) || 90,
+    name:         document.getElementById('cfg-name').value.trim(),
     skip_sent:    document.getElementById('cfg-skip-sent').checked,
     period_type:  period,
     date_start:   dateStart ? dateStart + 'T00:00:00' : '',
     date_end:     dateEnd   ? dateEnd   + 'T23:59:59' : '',
   };
   if (!cfg.url || !cfg.username || !cfg.password) {
-    return alert('Preencha URL, usuário e senha do Sigaway.');
+    return showToast('Preencha URL, usuário e senha do Sigaway.', 'warning');
   }
 
   fetch('/email/start', {
@@ -274,11 +362,12 @@ function emailStart() {
   })
   .then(r => r.json())
   .then(data => {
-    if (data.error) return alert(data.error);
+    if (data.error) return showToast(data.error, 'error');
     setBtns('running');
     setStatus('EXECUTANDO', 'green');
     startEmailSSE(data.stream_id);
-  });
+  })
+  .catch(() => showToast('Erro de rede ao iniciar campanha.', 'error'));
 }
 
 function startEmailSSE(streamId) {
@@ -370,20 +459,23 @@ function setBtns(state) {
 }
 
 function refreshHistory() {
-  fetch('/email/history').then(r => r.json()).then(rows => {
+  fetch('/email/history')
+  .then(r => r.json())
+  .then(rows => {
     const tb = document.getElementById('history-body');
     if (!rows.length) {
       tb.innerHTML = '<tr><td colspan="6" class="muted center">Nenhuma campanha ainda.</td></tr>';
     } else {
       tb.innerHTML = rows.map(c => {
         const inProgress = !c.completed_at;
+        const label = c.name || c.campaign_id.slice(-16);
         const extraBtns  = inProgress
           ? `<button class="btn-ghost small amber" onclick="resumeCampaign('${c.campaign_id}')">Continuar</button>
              <button class="btn-ghost small red"   onclick="finishCampaign('${c.campaign_id}')">Encerrar</button>`
           : '';
         return `
         <tr>
-          <td class="mono small">${c.campaign_id.slice(-16)}</td>
+          <td class="small" title="${c.campaign_id}">${label}</td>
           <td>${c.total||0}</td>
           <td class="green">${c.sent||0}</td>
           <td class="red">${c.failed||0}</td>
@@ -403,7 +495,8 @@ function refreshHistory() {
     document.getElementById('mm-sent').textContent    = sent;
     document.getElementById('mm-failed').textContent  = failed;
     document.getElementById('mm-bounced').textContent = bounce;
-  });
+  })
+  .catch(() => showToast('Erro ao carregar histórico.', 'error'));
 }
 
 function resumeCampaign(campaignId) {
@@ -429,7 +522,7 @@ function resumeCampaign(campaignId) {
   };
 
   if (!cfg.url || !cfg.username || !cfg.password) {
-    return alert('Preencha URL, usuário e senha do Sigaway na aba CONFIG antes de continuar.');
+    return showToast('Preencha URL, usuário e senha do Sigaway na aba CONFIG antes de continuar.', 'warning');
   }
 
   fetch(`/email/resume/${campaignId}`, {
@@ -439,25 +532,25 @@ function resumeCampaign(campaignId) {
   })
   .then(r => r.json())
   .then(data => {
-    if (data.error) return alert(data.error);
+    if (data.error) return showToast(data.error, 'error');
     setBtns('running');
     setStatus('EXECUTANDO', 'green');
     startEmailSSE(data.stream_id);
-    // Volta para a aba CONFIG para mostrar o console
     document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
     document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
     document.querySelector('.tab[data-tab="config"]').classList.add('active');
     document.getElementById('tab-config').classList.add('active');
-  });
+  })
+  .catch(() => showToast('Erro de rede ao retomar campanha.', 'error'));
 }
 
-function finishCampaign(campaignId) {
-  if (!confirm('Marcar esta campanha como encerrada?')) return;
+async function finishCampaign(campaignId) {
+  const ok = await confirmDialog('Marcar esta campanha como encerrada?');
+  if (!ok) return;
   fetch(`/email/finish/${campaignId}`, {method: 'POST'})
     .then(r => r.json())
-    .then(d => {
-      if (d.ok) refreshHistory();
-    });
+    .then(d => { if (d.ok) { refreshHistory(); showToast('Campanha encerrada.', 'success'); } })
+    .catch(() => showToast('Erro ao encerrar campanha.', 'error'));
 }
 
 function loadSends(campaignId) {
@@ -484,6 +577,180 @@ function loadSends(campaignId) {
           </tr>`).join('')
       : '<tr><td colspan="5" class="muted center">Sem registros.</td></tr>';
   });
+}
+
+// ── ANALYTICS ────────────────────────────────────────────────────────────────
+let _anChart = null;
+let _anRows  = [];
+let _anSel   = null;
+
+function _parseUA(ua) {
+  const l = (ua || '').toLowerCase();
+  const device  = l.includes('mobile') || l.includes('android') || l.includes('iphone') ? 'Mobile'
+                : l.includes('ipad') || l.includes('tablet') ? 'Tablet' : 'Desktop';
+  const browser = l.includes('edg') ? 'Edge' : l.includes('chrome') ? 'Chrome'
+                : l.includes('firefox') ? 'Firefox' : l.includes('safari') ? 'Safari'
+                : l.includes('outlook') || l.includes('microsoft') ? 'Outlook' : '—';
+  return `${device} / ${browser}`;
+}
+
+function loadAnalytics() {
+  fetch('/email/analytics-data')
+  .then(r => r.json())
+  .then(rows => {
+    _anRows = rows;
+    // Popula filtro de campanhas
+    const sel = document.getElementById('an-filter');
+    const prev = sel.value;
+    sel.innerHTML = '<option value="">Todas as campanhas</option>';
+    rows.forEach(r => {
+      const o = document.createElement('option');
+      o.value = r.campaign_id;
+      o.textContent = r.name || r.campaign_id.slice(-16);
+      sel.appendChild(o);
+    });
+    if (prev) sel.value = prev;
+    _anRender(rows);
+  })
+  .catch(() => showToast('Erro ao carregar analytics.', 'error'));
+}
+
+function anFilterChange() {
+  const val = document.getElementById('an-filter').value;
+  _anSel = val || null;
+  _anRender(val ? _anRows.filter(r => r.campaign_id === val) : _anRows);
+}
+
+function _anRender(rows) {
+  if (!rows.length) {
+    document.getElementById('analytics-hint').style.display = '';
+    return;
+  }
+  document.getElementById('analytics-hint').style.display = 'none';
+
+  const totals = rows.reduce((a, c) => ({
+    campaigns: a.campaigns + 1,
+    sent:      a.sent      + (c.sent || 0),
+    opens:     a.opens     + (c.unique_opens || 0),
+    clicks:    a.clicks    + (c.unique_clicks || 0),
+    bounce:    a.bounce    + (c.bounced || 0),
+  }), {campaigns:0, sent:0, opens:0, clicks:0, bounce:0});
+
+  const openRate = totals.sent  ? (totals.opens  / totals.sent  * 100).toFixed(1) : '0.0';
+  const ctr      = totals.sent  ? (totals.clicks / totals.sent  * 100).toFixed(1) : '0.0';
+  const ctor     = totals.opens ? (totals.clicks / totals.opens * 100).toFixed(1) : '0.0';
+
+  document.getElementById('an-campaigns').textContent = totals.campaigns;
+  document.getElementById('an-sent').textContent      = totals.sent;
+  document.getElementById('an-opens').textContent     = totals.opens;
+  document.getElementById('an-clicks').textContent    = totals.clicks;
+  document.getElementById('an-openrate').textContent  = openRate + '%';
+  document.getElementById('an-ctr').textContent       = ctr + '%';
+  document.getElementById('an-ctor').textContent      = ctor + '%';
+  document.getElementById('an-bounce').textContent    = totals.bounce;
+
+  const sorted = [...rows].sort((a, b) => b.open_rate - a.open_rate);
+  document.getElementById('analytics-body').innerHTML = sorted.map(c => {
+    const orate  = c.open_rate || 0;
+    const ctrVal = c.ctr || 0;
+    const ctorVal = c.ctor || 0;
+    const name   = c.name || c.campaign_id.slice(-18);
+    const openColor = orate  >= 30 ? 'green' : orate  >= 10 ? 'amber' : 'red';
+    const ctrColor  = ctrVal >= 5  ? 'green' : ctrVal >= 1  ? 'amber' : '';
+    return `
+      <tr style="cursor:pointer" onclick="_anSelRow('${c.campaign_id}')">
+        <td class="small" title="${c.campaign_id}">${name}</td>
+        <td>${c.sent || 0}</td>
+        <td style="color:var(--leads)">${c.unique_opens || 0}</td>
+        <td class="${openColor}">${orate}%</td>
+        <td class="amber">${c.unique_clicks || 0}</td>
+        <td class="${ctrColor}">${ctrVal}%</td>
+        <td style="color:var(--sdr-bright)">${ctorVal}%</td>
+        <td><button class="btn-ghost small green" onclick="event.stopPropagation();loadAnalyticsDetail('${c.campaign_id}')">↓</button></td>
+      </tr>`;
+  }).join('');
+
+  const chartData = sorted.slice(0, 8).reverse();
+  const canvas = document.getElementById('an-chart');
+  canvas.style.display = '';
+  if (_anChart) _anChart.destroy();
+  _anChart = new Chart(canvas, {
+    type: 'bar',
+    data: {
+      labels: chartData.map(c => c.name ? c.name.slice(0,16) : c.campaign_id.slice(-12)),
+      datasets: [
+        {
+          label: 'Open Rate %',
+          data: chartData.map(c => c.open_rate || 0),
+          backgroundColor: 'rgba(16,185,129,.2)',
+          borderColor: '#10b981',
+          borderWidth: 1,
+        },
+        {
+          label: 'CTR %',
+          data: chartData.map(c => c.ctr || 0),
+          backgroundColor: 'rgba(251,191,36,.2)',
+          borderColor: '#fbbf24',
+          borderWidth: 1,
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      plugins: { legend: { labels: { color: '#f4f4f5', font: { size: 11 } } } },
+      scales: {
+        x: { ticks: { color: '#a1a1aa', font: { size: 10 } }, grid: { color: '#27272a' } },
+        y: { ticks: { color: '#a1a1aa', font: { size: 10 } }, grid: { color: '#27272a' } },
+      },
+    },
+  });
+}
+
+function _anSelRow(campaignId) {
+  _anSel = campaignId;
+  loadAnalyticsDetail(campaignId);
+}
+
+function anShowDetail(type) {
+  if (!_anRows.length) {
+    showToast('Carregue os dados de analytics primeiro.', 'info');
+    return;
+  }
+  const id = _anSel || (_anRows[0] && _anRows[0].campaign_id);
+  if (!id) return;
+  loadAnalyticsDetail(id, type);
+}
+
+function switchDetailTab(tab) {
+  document.querySelectorAll('.detail-tab-btn').forEach(b =>
+    b.classList.toggle('active', b.dataset.dtab === tab)
+  );
+  document.getElementById('detail-opens-section').style.display  = tab === 'opens'  ? '' : 'none';
+  document.getElementById('detail-clicks-section').style.display = tab === 'clicks' ? '' : 'none';
+}
+
+function loadAnalyticsDetail(campaignId, focusTab) {
+  _anSel = campaignId;
+  document.getElementById('analytics-detail-section').style.display = '';
+  if (focusTab) switchDetailTab(focusTab);
+  document.getElementById('detail-campaign-label').textContent = _anRows.find(r => r.campaign_id === campaignId)?.name || campaignId.slice(-20);
+  document.getElementById('detail-opens-body').innerHTML  = '<tr><td colspan="4" class="muted center">Carregando…</td></tr>';
+  document.getElementById('detail-clicks-body').innerHTML = '<tr><td colspan="4" class="muted center">Carregando…</td></tr>';
+
+  fetch(`/email/analytics-detail/${campaignId}`)
+  .then(r => r.json())
+  .then(d => {
+    const mkRow = item => `
+      <tr>
+        <td>${item.cliente || '—'}</td>
+        <td class="mono small">${(item.email || '—').split('@')[0]}@…</td>
+        <td class="mono small muted">${(item.opened_at || item.clicked_at || '').slice(11,19)}</td>
+        <td class="muted small">${_parseUA(item.user_agent)}</td>
+      </tr>`;
+    document.getElementById('detail-opens-body').innerHTML  = d.opens.length  ? d.opens.map(mkRow).join('')  : '<tr><td colspan="4" class="muted center">Nenhuma abertura rastreada.</td></tr>';
+    document.getElementById('detail-clicks-body').innerHTML = d.clicks.length ? d.clicks.map(mkRow).join('') : '<tr><td colspan="4" class="muted center">Nenhum clique rastreado.</td></tr>';
+  })
+  .catch(() => showToast('Erro ao carregar detalhe.', 'error'));
 }
 
 function setExcelPath(input) {

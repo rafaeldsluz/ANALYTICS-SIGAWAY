@@ -1,0 +1,247 @@
+{% extends "base.html" %}
+{% block page_title %}Aprovação de Usuários{% endblock %}
+
+{% block content %}
+<style>
+  .kpi-row { display:flex; gap:14px; margin-bottom:24px; flex-wrap:wrap; }
+  .kpi { flex:1; min-width:120px; background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:16px 18px; }
+  .kpi-label { font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.5px; color:var(--text-3); margin-bottom:6px; }
+  .kpi-value { font-size:28px; font-weight:700; }
+  .kpi-value.amber { color:#f59e0b; }
+  .kpi-value.green { color:#10b981; }
+  .kpi-value.red   { color:#ef4444; }
+
+  .filter-bar { display:flex; gap:8px; margin-bottom:16px; flex-wrap:wrap; }
+  .filter-btn { border:1px solid var(--border); background:var(--surface); color:var(--text-2); border-radius:6px; padding:6px 14px; font-size:12px; font-weight:500; cursor:pointer; font-family:inherit; transition:all .15s; }
+  .filter-btn.active { background:#10b981; border-color:#10b981; color:#fff; }
+  .filter-btn:hover:not(.active) { border-color:#10b981; color:#10b981; }
+
+  .users-table { width:100%; border-collapse:collapse; }
+  .users-table th { font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.5px; color:var(--text-3); text-align:left; padding:10px 12px; border-bottom:1px solid var(--border); }
+  .users-table td { padding:12px; border-bottom:1px solid rgba(42,45,58,.5); font-size:13px; vertical-align:middle; }
+  .users-table tr:last-child td { border-bottom:none; }
+  .users-table tr:hover td { background:rgba(255,255,255,.02); }
+
+  .badge { display:inline-block; border-radius:4px; padding:2px 8px; font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.3px; }
+  .badge.pending  { background:rgba(245,158,11,.15); color:#f59e0b; }
+  .badge.approved { background:rgba(16,185,129,.15); color:#10b981; }
+  .badge.rejected { background:rgba(239,68,68,.15); color:#ef4444; }
+
+  .role-badge { display:inline-block; border-radius:4px; padding:2px 8px; font-size:11px; font-weight:600; }
+  .role-badge.master { background:rgba(139,92,246,.15); color:#a78bfa; }
+  .role-badge.admin  { background:rgba(59,130,246,.15);  color:#60a5fa; }
+  .role-badge.user   { background:rgba(148,163,184,.1);  color:#94a3b8; }
+
+  .action-btns { display:flex; gap:6px; }
+  .btn-sm { border:none; border-radius:6px; padding:5px 12px; font-size:12px; font-weight:600; font-family:inherit; cursor:pointer; transition:all .15s; }
+  .btn-approve { background:rgba(16,185,129,.15); color:#10b981; }
+  .btn-approve:hover { background:#10b981; color:#fff; }
+  .btn-reject  { background:rgba(239,68,68,.15);  color:#ef4444; }
+  .btn-reject:hover  { background:#ef4444;  color:#fff; }
+  .btn-promote { background:rgba(59,130,246,.15); color:#60a5fa; }
+  .btn-promote:hover { background:#3b82f6; color:#fff; }
+  .btn-delete  { background:rgba(239,68,68,.08); color:var(--text-3); }
+  .btn-delete:hover  { background:#ef4444; color:#fff; }
+
+  .empty-state { text-align:center; padding:48px; color:var(--text-3); }
+  .empty-state svg { opacity:.3; margin-bottom:12px; }
+
+  .toast { position:fixed; bottom:24px; right:24px; background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:12px 18px; font-size:13px; display:flex; align-items:center; gap:10px; box-shadow:0 8px 32px rgba(0,0,0,.5); z-index:9999; transform:translateY(80px); opacity:0; transition:all .3s; pointer-events:none; }
+  .toast.show { transform:translateY(0); opacity:1; }
+  .toast.ok  { border-color:#10b981; }
+  .toast.err { border-color:#ef4444; }
+
+  .section-card { background:var(--surface); border:1px solid var(--border); border-radius:10px; overflow:hidden; }
+  .section-header { padding:14px 16px; border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between; }
+  .section-header h3 { font-size:13px; font-weight:600; color:var(--text-1); }
+  .count-chip { background:var(--bg); border:1px solid var(--border); border-radius:20px; padding:2px 10px; font-size:11px; font-weight:600; color:var(--text-2); }
+</style>
+
+<!-- KPIs -->
+<div class="kpi-row">
+  <div class="kpi">
+    <div class="kpi-label">Total</div>
+    <div class="kpi-value">{{ stats.total }}</div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-label">Pendentes</div>
+    <div class="kpi-value amber">{{ stats.pending }}</div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-label">Aprovados</div>
+    <div class="kpi-value green">{{ stats.approved }}</div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-label">Recusados</div>
+    <div class="kpi-value red">{{ stats.rejected }}</div>
+  </div>
+</div>
+
+<!-- Filtros -->
+<div class="filter-bar">
+  <button class="filter-btn active" data-status="">Todos</button>
+  <button class="filter-btn" data-status="pending">Pendentes</button>
+  <button class="filter-btn" data-status="approved">Aprovados</button>
+  <button class="filter-btn" data-status="rejected">Recusados</button>
+</div>
+
+<!-- Tabela -->
+<div class="section-card">
+  <div class="section-header">
+    <h3>Usuários</h3>
+    <span class="count-chip" id="count-chip">{{ users|length }}</span>
+  </div>
+  <div style="overflow-x:auto;">
+    <table class="users-table" id="users-table">
+      <thead>
+        <tr>
+          <th>Usuário</th>
+          <th>E-mail</th>
+          <th>Status</th>
+          <th>Role</th>
+          <th>Solicitado em</th>
+          <th>Aprovado por</th>
+          <th>Ações</th>
+        </tr>
+      </thead>
+      <tbody id="users-tbody">
+        {% for u in users %}
+        <tr id="row-{{ u.id }}" data-status="{{ u.status }}">
+          <td style="font-weight:600;">{{ u.username }}</td>
+          <td style="color:var(--text-2);">{{ u.email }}</td>
+          <td><span class="badge {{ u.status }}">{{ u.status }}</span></td>
+          <td><span class="role-badge {{ u.role }}">{{ u.role }}</span></td>
+          <td style="color:var(--text-3);font-size:12px;">{{ u.created_at[:16] if u.created_at else '—' }}</td>
+          <td style="color:var(--text-3);font-size:12px;">{{ u.approved_by or '—' }}</td>
+          <td>
+            <div class="action-btns">
+              {% if u.status == 'pending' %}
+              <button class="btn-sm btn-approve" onclick="approveUser({{ u.id }})">Aprovar</button>
+              <button class="btn-sm btn-reject"  onclick="rejectUser({{ u.id }})">Recusar</button>
+              {% elif u.status == 'approved' %}
+              <button class="btn-sm btn-reject"  onclick="rejectUser({{ u.id }})">Revogar</button>
+              {% elif u.status == 'rejected' %}
+              <button class="btn-sm btn-approve" onclick="approveUser({{ u.id }})">Aprovar</button>
+              {% endif %}
+              {% if u.role == 'user' and u.status == 'approved' %}
+              <button class="btn-sm btn-promote" onclick="promoteUser({{ u.id }}, 'admin')">→ Admin</button>
+              {% elif u.role == 'admin' %}
+              <button class="btn-sm btn-promote" onclick="promoteUser({{ u.id }}, 'user')" style="color:var(--text-3);">→ User</button>
+              {% endif %}
+              <button class="btn-sm btn-delete" onclick="deleteUser({{ u.id }}, '{{ u.username }}')">✕</button>
+            </div>
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="7"><div class="empty-state">Nenhum usuário cadastrado.</div></td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Toast -->
+<div id="toast" class="toast">
+  <span id="toast-msg"></span>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+const CSRF = document.querySelector('meta[name="csrf-token"]').content;
+
+function toast(msg, ok = true) {
+  const el = document.getElementById('toast');
+  el.className = 'toast show ' + (ok ? 'ok' : 'err');
+  document.getElementById('toast-msg').textContent = msg;
+  setTimeout(() => { el.className = 'toast'; }, 3000);
+}
+
+async function post(url, body = {}) {
+  const r = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': CSRF },
+    body: JSON.stringify(body),
+  });
+  return r.json();
+}
+
+async function approveUser(uid) {
+  const data = await post(`/admin/users/${uid}/approve`);
+  if (data.ok) {
+    updateRow(uid, 'approved');
+    toast('Usuário aprovado com sucesso.');
+  } else {
+    toast(data.error || 'Erro ao aprovar.', false);
+  }
+}
+
+async function rejectUser(uid) {
+  const data = await post(`/admin/users/${uid}/reject`, { notes: '' });
+  if (data.ok) {
+    updateRow(uid, 'rejected');
+    toast('Acesso revogado.');
+  } else {
+    toast(data.error || 'Erro ao recusar.', false);
+  }
+}
+
+async function promoteUser(uid, role) {
+  const data = await post(`/admin/users/${uid}/promote`, { role });
+  if (data.ok) {
+    toast(`Role alterada para ${role}.`);
+    setTimeout(() => location.reload(), 1200);
+  } else {
+    toast(data.error || 'Erro ao alterar role.', false);
+  }
+}
+
+async function deleteUser(uid, username) {
+  if (!confirm(`Deletar permanentemente o usuário "${username}"?`)) return;
+  const data = await post(`/admin/users/${uid}/delete`);
+  if (data.ok) {
+    const row = document.getElementById(`row-${uid}`);
+    if (row) row.remove();
+    updateCount();
+    toast('Usuário removido.');
+  } else {
+    toast(data.error || 'Erro ao deletar.', false);
+  }
+}
+
+function updateRow(uid, newStatus) {
+  const row = document.getElementById(`row-${uid}`);
+  if (!row) return;
+  row.dataset.status = newStatus;
+
+  const badge = row.querySelector('.badge');
+  badge.className = `badge ${newStatus}`;
+  badge.textContent = newStatus;
+
+  // Recarrega a linha após 1s para atualizar botões de ação
+  setTimeout(() => location.reload(), 1200);
+}
+
+function updateCount() {
+  const visible = document.querySelectorAll('#users-tbody tr[data-status]').length;
+  document.getElementById('count-chip').textContent = visible;
+}
+
+// Filtros
+document.querySelectorAll('.filter-btn').forEach(btn => {
+  btn.addEventListener('click', function () {
+    document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+    this.classList.add('active');
+    const status = this.dataset.status;
+    let count = 0;
+    document.querySelectorAll('#users-tbody tr[data-status]').forEach(row => {
+      const show = !status || row.dataset.status === status;
+      row.style.display = show ? '' : 'none';
+      if (show) count++;
+    });
+    document.getElementById('count-chip').textContent = count;
+  });
+});
+</script>
+{% endblock %}

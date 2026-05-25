@@ -9,8 +9,6 @@ import time
 import urllib3
 import requests
 
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-
 logger = logging.getLogger(__name__)
 
 _MAX_RETRIES = 3
@@ -48,7 +46,7 @@ def send_whatsapp(
     for attempt in range(1, _MAX_RETRIES + 1):
         logger.info(f"  [WZ] Tentativa {attempt}/{_MAX_RETRIES} → {number}")
         try:
-            resp = requests.post(url, json=payload, headers=headers, timeout=20, verify=False)
+            resp = requests.post(url, json=payload, headers=headers, timeout=20, verify=True)
             if resp.status_code in (200, 201):
                 logger.info(f"  [WZ] Enviado com sucesso → {number}")
                 return
@@ -88,7 +86,7 @@ def check_instance(base_url: str, api_key: str, instance: str) -> str:
     Retorna string de estado ('open', 'close', etc.).
     """
     url = f"{base_url.rstrip('/')}/instance/connectionState/{instance}"
-    resp = requests.get(url, headers={"apikey": api_key}, timeout=10, verify=False)
+    resp = requests.get(url, headers={"apikey": api_key}, timeout=10, verify=True)
     if not resp.ok:
         raise RuntimeError(f"HTTP {resp.status_code}: {resp.text[:200]}")
     data = resp.json()

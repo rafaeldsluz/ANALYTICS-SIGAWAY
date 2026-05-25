@@ -1,0 +1,27 @@
+# Credenciais e configuração local
+.env
+
+# Bancos de dados
+*.db
+*.db-shm
+*.db-wal
+
+# Bytecode Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Temporários
+.tmp/
+*.xlsx
+*.log
+
+# Logos originais (copiada para web/static/logo.jpg)
+logos/
+
+# IDE / OS
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store

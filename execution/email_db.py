@@ -22,8 +22,11 @@ _NDR_SUBJECTS = (
 
 
 def _conn() -> sqlite3.Connection:
-    c = sqlite3.connect(DB_PATH)
+    c = sqlite3.connect(DB_PATH, timeout=30)
     c.row_factory = sqlite3.Row
+    # Network shares (UNC paths) can't create journal files on disk;
+    # MEMORY mode keeps the journal in RAM, avoiding SQLITE_CANTOPEN on writes.
+    c.execute("PRAGMA journal_mode=MEMORY")
     return c
 
 
@@ -34,6 +37,7 @@ def init_db() -> None:
                 CREATE TABLE IF NOT EXISTS email_campaigns (
                     id           INTEGER PRIMARY KEY AUTOINCREMENT,
                     campaign_id  TEXT UNIQUE NOT NULL,
+                    name         TEXT DEFAULT '',
                     excel_path   TEXT DEFAULT '',
                     total        INTEGER DEFAULT 0,
                     sent         INTEGER DEFAULT 0,
@@ -46,17 +50,35 @@ def init_db() -> None:
             """)
             c.execute("""
                 CREATE TABLE IF NOT EXISTS email_sends (
-                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-                    campaign_id TEXT NOT NULL,
-                    cliente     TEXT DEFAULT '',
-                    email       TEXT DEFAULT '',
-                    status      TEXT DEFAULT 'pending',
-                    error_msg   TEXT DEFAULT '',
-                    sent_at     TEXT,
-                    bounced     INTEGER DEFAULT 0,
-                    created_at  TEXT DEFAULT (datetime('now','localtime'))
+                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                    campaign_id     TEXT NOT NULL,
+                    cliente         TEXT DEFAULT '',
+                    email           TEXT DEFAULT '',
+                    status          TEXT DEFAULT 'pending',
+                    error_msg       TEXT DEFAULT '',
+                    sent_at         TEXT,
+                    bounced         INTEGER DEFAULT 0,
+                    tracking_token  TEXT DEFAULT '',
+                    created_at      TEXT DEFAULT (datetime('now','localtime'))
                 )
             """)
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS email_opens (
+                    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                    token      TEXT NOT NULL,
+                    opened_at  TEXT NOT NULL,
+                    user_agent TEXT DEFAULT '',
+                    ip         TEXT DEFAULT ''
+                )
+            """)
+            try:
+                c.execute("ALTER TABLE email_sends ADD COLUMN tracking_token TEXT DEFAULT ''")
+            except Exception:
+                pass
+            try:
+                c.execute("ALTER TABLE email_campaigns ADD COLUMN name TEXT DEFAULT ''")
+            except Exception:
+                pass
             c.execute(
                 "CREATE INDEX IF NOT EXISTS idx_ec_id ON email_campaigns(campaign_id)"
             )
@@ -66,16 +88,32 @@ def init_db() -> None:
             c.execute(
                 "CREATE INDEX IF NOT EXISTS idx_es_email ON email_sends(email)"
             )
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS email_clicks (
+                    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                    token      TEXT NOT NULL,
+                    url        TEXT DEFAULT '',
+                    clicked_at TEXT NOT NULL,
+                    user_agent TEXT DEFAULT '',
+                    ip         TEXT DEFAULT ''
+                )
+            """)
+            c.execute(
+                "CREATE INDEX IF NOT EXISTS idx_eo_token ON email_opens(token)"
+            )
+            c.execute(
+                "CREATE INDEX IF NOT EXISTS idx_ck_token ON email_clicks(token)"
+            )
 
 
-def start_campaign(campaign_id: str, excel_path: str, total: int) -> None:
+def start_campaign(campaign_id: str, excel_path: str, total: int, name: str = "") -> None:
     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     with _lock:
         with _conn() as c:
             c.execute(
-                "INSERT INTO email_campaigns (campaign_id, excel_path, total, started_at) "
-                "VALUES (?,?,?,?)",
-                (campaign_id, excel_path, total, ts),
+                "INSERT INTO email_campaigns (campaign_id, name, excel_path, total, started_at) "
+                "VALUES (?,?,?,?,?)",
+                (campaign_id, name[:120], excel_path, total, ts),
             )
 
 
@@ -85,22 +123,27 @@ def record_send(
     email: str,
     status: str,           # "sent" | "failed" | "no_email"
     error_msg: str = "",
+    tracking_token: str = "",
 ) -> None:
     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S") if status == "sent" else None
     with _lock:
         with _conn() as c:
             c.execute(
                 "INSERT INTO email_sends "
-                "(campaign_id, cliente, email, status, error_msg, sent_at) "
-                "VALUES (?,?,?,?,?,?)",
-                (campaign_id, cliente, email, status, error_msg[:500], ts),
+                "(campaign_id, cliente, email, status, error_msg, sent_at, tracking_token) "
+                "VALUES (?,?,?,?,?,?,?)",
+                (campaign_id, cliente, email, status, error_msg[:500], ts, tracking_token),
             )
-            col = {"sent": "sent", "failed": "failed", "no_email": "no_email"}.get(status)
-            if col:
-                c.execute(
-                    f"UPDATE email_campaigns SET {col}={col}+1 WHERE campaign_id=?",
-                    (campaign_id,),
-                )
+            # Whitelist column names — prevents dynamic SQL injection
+            _COL_MAP = {"sent": "sent", "failed": "failed", "no_email": "no_email"}
+            col = _COL_MAP.get(status)
+            if col in _COL_MAP.values():
+                sql = {
+                    "sent":     "UPDATE email_campaigns SET sent=sent+1 WHERE campaign_id=?",
+                    "failed":   "UPDATE email_campaigns SET failed=failed+1 WHERE campaign_id=?",
+                    "no_email": "UPDATE email_campaigns SET no_email=no_email+1 WHERE campaign_id=?",
+                }[col]
+                c.execute(sql, (campaign_id,))
 
 
 def finish_campaign(campaign_id: str) -> None:
@@ -201,6 +244,108 @@ def clear_sent_history() -> int:
             n = c.execute("DELETE FROM email_sends").rowcount
             c.execute("DELETE FROM email_campaigns")
     return n
+
+
+def record_click(token: str, url: str = "", user_agent: str = "", ip: str = "") -> None:
+    """Registra um clique em link rastreável."""
+    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    with _lock:
+        with _conn() as c:
+            c.execute(
+                "INSERT INTO email_clicks (token, url, clicked_at, user_agent, ip) VALUES (?,?,?,?,?)",
+                (token, url[:2048], ts, user_agent[:512], ip[:64]),
+            )
+
+
+def get_campaign_clicks(campaign_id: str) -> list[dict]:
+    """Retorna lista de cliques de uma campanha."""
+    with _lock:
+        with _conn() as c:
+            rows = c.execute(
+                """
+                SELECT es.cliente, es.email, ck.url, ck.clicked_at, ck.user_agent, ck.ip
+                FROM email_clicks ck
+                JOIN email_sends es ON es.tracking_token = ck.token
+                WHERE es.campaign_id = ?
+                ORDER BY ck.clicked_at DESC
+                """,
+                (campaign_id,),
+            ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_analytics_data(n: int = 20) -> list[dict]:
+    """Retorna KPIs agregados por campanha, da mais recente para a mais antiga."""
+    with _lock:
+        with _conn() as c:
+            rows = c.execute(
+                """
+                SELECT
+                    ec.campaign_id,
+                    ec.started_at,
+                    ec.completed_at,
+                    ec.total,
+                    ec.sent,
+                    ec.failed,
+                    ec.bounced,
+                    COUNT(DISTINCT CASE WHEN eo.id IS NOT NULL THEN es.id END) AS unique_opens,
+                    COUNT(eo.id)                                               AS total_opens,
+                    COUNT(DISTINCT CASE WHEN ck.id IS NOT NULL THEN ck.token END) AS unique_clicks,
+                    COUNT(ck.id)                                               AS total_clicks
+                FROM email_campaigns ec
+                LEFT JOIN email_sends es
+                    ON es.campaign_id = ec.campaign_id
+                    AND es.status = 'sent'
+                    AND es.tracking_token != ''
+                LEFT JOIN email_opens  eo ON eo.token = es.tracking_token
+                LEFT JOIN email_clicks ck ON ck.token = es.tracking_token
+                GROUP BY ec.campaign_id
+                ORDER BY ec.started_at DESC
+                LIMIT ?
+                """,
+                (n,),
+            ).fetchall()
+    result = []
+    for r in rows:
+        d = dict(r)
+        sent          = d.get("sent") or 0
+        unique_opens  = d.get("unique_opens") or 0
+        unique_clicks = d.get("unique_clicks") or 0
+        total         = d.get("total") or 0
+        d["open_rate"]     = round(unique_opens  / sent  * 100, 1) if sent  else 0.0
+        d["ctr"]           = round(unique_clicks / sent  * 100, 1) if sent  else 0.0
+        d["ctor"]          = round(unique_clicks / unique_opens * 100, 1) if unique_opens else 0.0
+        d["delivery_rate"] = round(sent / total * 100, 1) if total else 0.0
+        result.append(d)
+    return result
+
+
+def record_open(token: str, user_agent: str = "", ip: str = "") -> None:
+    """Registra uma abertura de e-mail via pixel de rastreamento."""
+    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    with _lock:
+        with _conn() as c:
+            c.execute(
+                "INSERT INTO email_opens (token, opened_at, user_agent, ip) VALUES (?,?,?,?)",
+                (token, ts, user_agent[:512], ip[:64]),
+            )
+
+
+def get_campaign_opens(campaign_id: str) -> list[dict]:
+    """Retorna lista de aberturas de uma campanha (join email_sends → email_opens)."""
+    with _lock:
+        with _conn() as c:
+            rows = c.execute(
+                """
+                SELECT es.cliente, es.email, eo.opened_at, eo.user_agent, eo.ip
+                FROM email_opens eo
+                JOIN email_sends es ON es.tracking_token = eo.token
+                WHERE es.campaign_id = ?
+                ORDER BY eo.opened_at DESC
+                """,
+                (campaign_id,),
+            ).fetchall()
+    return [dict(r) for r in rows]
 
 
 def check_bounces_graph(

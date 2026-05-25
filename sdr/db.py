@@ -9,8 +9,9 @@ DB_PATH = Path(__file__).parent.parent / ".tmp" / "sdr.db"
 
 def _conn() -> sqlite3.Connection:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    c = sqlite3.connect(str(DB_PATH), check_same_thread=False)
+    c = sqlite3.connect(str(DB_PATH), timeout=30, check_same_thread=False)
     c.row_factory = sqlite3.Row
+    c.execute("PRAGMA journal_mode=MEMORY")
     return c
 
 

@@ -1,0 +1,162 @@
+{% extends "base.html" %}
+{% block page_title %}SEGURANÇA  /  Painel de Auditoria{% endblock %}
+
+{% block content %}
+<div class="dash-wrap">
+
+  <!-- ── KPI cards ──────────────────────────────────────────────────────── -->
+  <div class="kpi-row">
+    <div class="kpi-card">
+      <div class="kpi-icon">📋</div>
+      <div class="kpi-val sdr">{{ stats.total }}</div>
+      <div class="kpi-lbl">EVENTOS TOTAIS</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-icon">⚠️</div>
+      <div class="kpi-val amber">{{ stats.warnings }}</div>
+      <div class="kpi-lbl">ALERTAS / ERROS</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-icon">🚫</div>
+      <div class="kpi-val red">{{ stats.blocked }}</div>
+      <div class="kpi-lbl">BLOQUEIOS (RATE LIMIT)</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-icon">🕐</div>
+      <div class="kpi-val green">{{ stats.last24h }}</div>
+      <div class="kpi-lbl">EVENTOS ÚLTIMAS 24H</div>
+    </div>
+  </div>
+
+  <!-- ── Top events ─────────────────────────────────────────────────────── -->
+  <div class="charts-row" style="margin-bottom:20px;">
+    <div class="chart-card" style="flex:1">
+      <div class="chart-title">Top Eventos de Segurança</div>
+      <table class="data-table" style="width:100%;border-collapse:collapse;">
+        <thead>
+          <tr>
+            <th style="text-align:left;padding:8px 12px;font-size:11px;color:var(--text-3);border-bottom:1px solid var(--border);">EVENTO</th>
+            <th style="text-align:right;padding:8px 12px;font-size:11px;color:var(--text-3);border-bottom:1px solid var(--border);">OCORRÊNCIAS</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for e in stats.top_events %}
+          <tr>
+            <td style="padding:8px 12px;font-size:13px;font-family:monospace;color:var(--text-2);border-bottom:1px solid var(--border);">{{ e.event }}</td>
+            <td style="padding:8px 12px;text-align:right;font-size:13px;font-weight:600;border-bottom:1px solid var(--border);">{{ e.cnt }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ── Filtros ─────────────────────────────────────────────────────────── -->
+  <div class="period-row" style="margin-bottom:16px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+    <span class="mono small muted">Filtrar por nível:</span>
+    <button class="btn-period active" onclick="filterEvents('')">Todos</button>
+    <button class="btn-period" onclick="filterEvents('INFO')">Info</button>
+    <button class="btn-period" onclick="filterEvents('WARNING')" style="color:var(--amber)">Warning</button>
+    <button class="btn-period" onclick="filterEvents('ERROR')" style="color:var(--red)">Error</button>
+    <button class="btn-period" onclick="filterEvents('CRITICAL')" style="color:var(--red)">Critical</button>
+    <button class="btn-ghost small sdr" style="margin-left:auto" onclick="loadEvents('')">↻ Atualizar</button>
+  </div>
+
+  <!-- ── Tabela de eventos ───────────────────────────────────────────────── -->
+  <div class="chart-card" style="overflow:hidden;">
+    <div class="chart-title">Log de Auditoria
+      <span id="ev-count" class="mono small muted" style="margin-left:8px;"></span>
+    </div>
+    <div style="overflow-x:auto;">
+      <table style="width:100%;border-collapse:collapse;" id="events-table">
+        <thead>
+          <tr>
+            <th style="text-align:left;padding:8px 12px;font-size:11px;color:var(--text-3);border-bottom:1px solid var(--border);white-space:nowrap;">DATA/HORA</th>
+            <th style="text-align:left;padding:8px 12px;font-size:11px;color:var(--text-3);border-bottom:1px solid var(--border);">NÍVEL</th>
+            <th style="text-align:left;padding:8px 12px;font-size:11px;color:var(--text-3);border-bottom:1px solid var(--border);">EVENTO</th>
+            <th style="text-align:left;padding:8px 12px;font-size:11px;color:var(--text-3);border-bottom:1px solid var(--border);">IP</th>
+            <th style="text-align:left;padding:8px 12px;font-size:11px;color:var(--text-3);border-bottom:1px solid var(--border);">ROTA</th>
+            <th style="text-align:left;padding:8px 12px;font-size:11px;color:var(--text-3);border-bottom:1px solid var(--border);">DETALHE</th>
+          </tr>
+        </thead>
+        <tbody id="events-body">
+          {% for e in events %}
+          <tr class="ev-row ev-{{ e.level | lower }}">
+            <td style="padding:7px 12px;font-size:12px;font-family:monospace;white-space:nowrap;border-bottom:1px solid var(--border);">{{ e.ts }}</td>
+            <td style="padding:7px 12px;font-size:11px;font-weight:700;border-bottom:1px solid var(--border);">
+              <span class="badge-level {{ e.level | lower }}">{{ e.level }}</span>
+            </td>
+            <td style="padding:7px 12px;font-size:12px;font-family:monospace;color:var(--text-2);border-bottom:1px solid var(--border);">{{ e.event }}</td>
+            <td style="padding:7px 12px;font-size:12px;font-family:monospace;color:var(--text-3);border-bottom:1px solid var(--border);">{{ e.ip }}</td>
+            <td style="padding:7px 12px;font-size:12px;font-family:monospace;color:var(--text-3);border-bottom:1px solid var(--border);">{{ e.method }} {{ e.path }}</td>
+            <td style="padding:7px 12px;font-size:12px;color:var(--text-3);border-bottom:1px solid var(--border);max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="{{ e.detail }}">{{ e.detail }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+</div>
+
+<style>
+.badge-level {
+  display: inline-block;
+  padding: 2px 7px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+}
+.badge-level.info     { background: rgba(16,185,129,.15); color: #6ee7b7; }
+.badge-level.warning  { background: rgba(245,158,11,.15); color: #fcd34d; }
+.badge-level.error    { background: rgba(239,68,68,.15);  color: #fca5a5; }
+.badge-level.critical { background: rgba(239,68,68,.3);   color: #f87171; }
+.ev-row { transition: background .1s; }
+.ev-row:hover { background: rgba(255,255,255,.03); }
+</style>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let _currentLevel = '';
+
+function filterEvents(level) {
+  _currentLevel = level;
+  document.querySelectorAll('.btn-period').forEach(b => b.classList.remove('active'));
+  event.target.classList.add('active');
+  loadEvents(level);
+}
+
+async function loadEvents(level) {
+  const url = `/security/events?limit=200${level ? '&level=' + level : ''}`;
+  const res  = await fetch(url);
+  const data = await res.json();
+  renderEvents(data);
+}
+
+function levelColor(l) {
+  return { INFO:'#6ee7b7', WARNING:'#fcd34d', ERROR:'#fca5a5', CRITICAL:'#f87171' }[l] || '#94a3b8';
+}
+
+function renderEvents(rows) {
+  const tbody = document.getElementById('events-body');
+  document.getElementById('ev-count').textContent = `(${rows.length})`;
+  tbody.innerHTML = rows.map(e => `
+    <tr class="ev-row">
+      <td style="padding:7px 12px;font-size:12px;font-family:monospace;white-space:nowrap;border-bottom:1px solid var(--border)">${e.ts}</td>
+      <td style="padding:7px 12px;border-bottom:1px solid var(--border)">
+        <span class="badge-level ${e.level.toLowerCase()}">${e.level}</span>
+      </td>
+      <td style="padding:7px 12px;font-size:12px;font-family:monospace;color:var(--text-2);border-bottom:1px solid var(--border)">${e.event}</td>
+      <td style="padding:7px 12px;font-size:12px;font-family:monospace;color:var(--text-3);border-bottom:1px solid var(--border)">${e.ip}</td>
+      <td style="padding:7px 12px;font-size:12px;font-family:monospace;color:var(--text-3);border-bottom:1px solid var(--border)">${e.method} ${e.path}</td>
+      <td style="padding:7px 12px;font-size:12px;color:var(--text-3);border-bottom:1px solid var(--border);max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${e.detail}">${e.detail}</td>
+    </tr>
+  `).join('');
+}
+
+// Atualização automática a cada 30s
+setInterval(() => loadEvents(_currentLevel), 30000);
+</script>
+{% endblock %}

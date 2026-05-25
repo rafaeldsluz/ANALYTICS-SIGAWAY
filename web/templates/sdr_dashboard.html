@@ -121,7 +121,7 @@
     padding:18px 16px 14px; text-align:center; position:relative; overflow:hidden;
     transition: border-color .2s, box-shadow .2s;
   }
-  .kpi-card:hover { border-color:var(--border2); box-shadow:0 4px 24px rgba(0,0,0,.4); }
+  .kpi-card:hover { border-color:var(--border-2); box-shadow:0 4px 24px rgba(0,0,0,.4); }
   .kpi-card.kpi-highlight { border-color:rgba(240,168,0,.2); }
   .kpi-card.kpi-meeting-card {
     border-color:rgba(16,185,129,.3);
@@ -130,12 +130,12 @@
   .kpi-card.kpi-meeting-card:hover { border-color:rgba(16,185,129,.6); box-shadow:0 4px 24px rgba(16,185,129,.15); }
   .kpi-icon { font-size:22px; margin-bottom:6px; }
   .kpi-val  { font-family:var(--mono); font-size:36px; font-weight:700; line-height:1; }
-  .kpi-val.sdr     { color:var(--sdr);   text-shadow:0 0 20px rgba(129,140,248,.5); }
-  .kpi-val.green   { color:var(--green); text-shadow:0 0 20px rgba(0,255,136,.5); }
-  .kpi-val.amber   { color:var(--amber); text-shadow:0 0 20px rgba(240,168,0,.5); }
-  .kpi-val.muted   { color:var(--text-sec); }
-  .kpi-val.kpi-meeting { color:#10b981; text-shadow:0 0 24px rgba(16,185,129,.6); }
-  .kpi-lbl  { font-family:var(--mono); font-size:8px; font-weight:700; color:var(--muted); margin-top:5px; letter-spacing:1.5px; }
+  .kpi-val.sdr     { color:var(--sdr); }
+  .kpi-val.green   { color:var(--green); }
+  .kpi-val.amber   { color:var(--amber); }
+  .kpi-val.muted   { color:var(--text-2); }
+  .kpi-val.kpi-meeting { color:#10b981; }
+  .kpi-lbl  { font-family:var(--mono); font-size:8px; font-weight:700; color:var(--text-3); margin-top:5px; letter-spacing:1.5px; }
   .kpi-meeting-badge {
     display:inline-block; margin-top:8px;
     background:rgba(16,185,129,.12); color:#10b981;
@@ -144,16 +144,16 @@
     padding:2px 7px; letter-spacing:.5px;
   }
   .kpi-bar-wrap { height:3px; background:var(--border); border-radius:2px; margin-top:10px; overflow:hidden; }
-  .kpi-bar-fill { height:100%; background:var(--amber); border-radius:2px; transition:width .6s ease; box-shadow:0 0 6px rgba(240,168,0,.5); }
+  .kpi-bar-fill { height:100%; background:var(--amber); border-radius:2px; transition:width .6s ease; }
 
   /* Period selector */
   .period-row { display:flex; align-items:center; gap:6px; }
   .btn-period {
-    background:transparent; border:1px solid var(--border2); border-radius:7px;
-    color:var(--muted); font-family:var(--mono); font-size:10px; font-weight:700;
+    background:transparent; border:1px solid var(--border-2); border-radius:7px;
+    color:var(--text-3); font-family:var(--mono); font-size:10px; font-weight:700;
     padding:5px 12px; cursor:pointer; transition:all .15s;
   }
-  .btn-period:hover  { color:var(--text); border-color:var(--muted); }
+  .btn-period:hover  { color:var(--text); border-color:var(--text-3); }
   .btn-period.active { background:var(--sdr-dim); color:var(--sdr); border-color:rgba(129,140,248,.4); }
 
   /* Charts */
@@ -168,12 +168,12 @@
   .charts-row:nth-of-type(2) { grid-template-columns: 2fr 1fr; }
 
   .chart-title {
-    font-family:var(--mono); font-size:9px; font-weight:700; color:var(--muted);
+    font-family:var(--mono); font-size:9px; font-weight:700; color:var(--text-3);
     letter-spacing:1.5px; margin-bottom:12px; text-transform:uppercase;
   }
 
   .funnel-labels { display:flex; flex-direction:column; gap:4px; margin-top:10px; }
-  .funnel-item { font-size:11px; color:var(--text-sec); display:flex; align-items:center; gap:6px; }
+  .funnel-item { font-size:11px; color:var(--text-2); display:flex; align-items:center; gap:6px; }
   .funnel-item b { color:var(--text); font-family:var(--mono); }
 
   /* Table */
@@ -194,8 +194,8 @@
 
 <script>
 // ── Chart.js global defaults ──────────────────────────────────────────────────
-Chart.defaults.color          = '#768390';
-Chart.defaults.borderColor    = '#1e2832';
+Chart.defaults.color          = '#a1a1aa';
+Chart.defaults.borderColor    = '#27272a';
 Chart.defaults.font.family    = "'Consolas', monospace";
 Chart.defaults.font.size      = 10;
 Chart.defaults.plugins.legend.labels.boxWidth = 10;
@@ -242,12 +242,12 @@ function buildCharts(data) {
         {
           label: 'Qualificados',
           data: quals,
-          borderColor: '#00ff88',
-          backgroundColor: 'rgba(0,255,136,.06)',
+          borderColor: '#10b981',
+          backgroundColor: 'rgba(16,185,129,.06)',
           fill: true,
           tension: 0.4,
           pointRadius: 3,
-          pointBackgroundColor: '#00ff88',
+          pointBackgroundColor: '#10b981',
         },
       ],
     },
@@ -256,8 +256,8 @@ function buildCharts(data) {
       interaction: { mode: 'index', intersect: false },
       plugins: { legend: { position: 'top' } },
       scales: {
-        x: { grid: { color: '#1e2832' } },
-        y: { grid: { color: '#1e2832' }, beginAtZero: true, ticks: { precision: 0 } },
+        x: { grid: { color: '#27272a' } },
+        y: { grid: { color: '#27272a' }, beginAtZero: true, ticks: { precision: 0 } },
       },
     },
   });
@@ -270,8 +270,8 @@ function buildCharts(data) {
       labels: ['Total', 'Responderam', 'Qualificados'],
       datasets: [{
         data: [fn.total, fn.responded, fn.qualified],
-        backgroundColor: ['rgba(129,140,248,.7)', 'rgba(56,189,248,.7)', 'rgba(0,255,136,.7)'],
-        borderColor:     ['#818cf8', '#38bdf8', '#00ff88'],
+        backgroundColor: ['rgba(129,140,248,.7)', 'rgba(56,189,248,.7)', 'rgba(16,185,129,.7)'],
+        borderColor:     ['#818cf8', '#38bdf8', '#10b981'],
         borderWidth: 1,
         borderRadius: 6,
       }],
@@ -281,7 +281,7 @@ function buildCharts(data) {
       responsive: true,
       plugins: { legend: { display: false } },
       scales: {
-        x: { grid: { color: '#1e2832' }, beginAtZero: true, ticks: { precision: 0 } },
+        x: { grid: { color: '#27272a' }, beginAtZero: true, ticks: { precision: 0 } },
         y: { grid: { display: false } },
       },
     },
@@ -314,13 +314,13 @@ function buildCharts(data) {
       plugins: { legend: { display: false } },
       scales: {
         x: { grid: { display: false }, ticks: { maxRotation: 0 } },
-        y: { grid: { color: '#1e2832' }, beginAtZero: true, ticks: { precision: 0 } },
+        y: { grid: { color: '#27272a' }, beginAtZero: true, ticks: { precision: 0 } },
       },
     },
   });
 
   // ── Message types (doughnut) ──
-  const typeColors = ['#818cf8','#38bdf8','#00ff88','#25D366','#f0a800','#ff4d4d','#a5b4fc','#3d4f60'];
+  const typeColors = ['#818cf8','#38bdf8','#10b981','#25D366','#f0a800','#ff4d4d','#a5b4fc','#3d4f60'];
   cTypes = new Chart(document.getElementById('chart-types'), {
     type: 'doughnut',
     data: {

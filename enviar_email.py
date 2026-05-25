@@ -7,18 +7,23 @@ Coloque na pasta Assinatura/:
   - banner_sigaway.jpg  (banner da empresa)
 """
 
+import re
 import smtplib
 import ssl
 from email.mime.image import MIMEImage
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from pathlib import Path
+from urllib.parse import quote as _url_quote
+
+_HREF_RE = re.compile(r'href="(https?://[^"]+)"', re.IGNORECASE)
 
 # ── Configuração SMTP ─────────────────────────────────────────────────────────
-SMTP_HOST     = "smtp.office365.com"
-SMTP_PORT     = 587
-SMTP_USER     = "rafael.luz@sigaway.com.br"
-SMTP_PASSWORD = "Rafa2205!"
+import os as _os
+SMTP_HOST     = _os.getenv("SMTP_HOST", "smtp.office365.com")
+SMTP_PORT     = int(_os.getenv("SMTP_PORT", "587"))
+SMTP_USER     = _os.getenv("SMTP_USER", "")
+SMTP_PASSWORD = _os.getenv("SMTP_PASS", "")
 
 ASSETS_DIR = Path(__file__).parent / "Assinatura"
 
@@ -42,7 +47,16 @@ def _load_image(filename: str) -> bytes:
 
 # ── HTML do e-mail ────────────────────────────────────────────────────────────
 
-def build_html(corpo: str, has_screenshot: bool = False) -> str:
+def _rewrite_links(html: str, tracking_base: str, token: str) -> str:
+    """Substitui todos href="https://..." pelo redirect de tracking."""
+    def _replace(m: re.Match) -> str:
+        original = m.group(1)
+        encoded  = _url_quote(original, safe="")
+        return f'href="{tracking_base}/email/track/click/{token}?u={encoded}"'
+    return _HREF_RE.sub(_replace, html)
+
+
+def build_html(corpo: str, has_screenshot: bool = False, tracking_base: str = "", tracking_token: str = "") -> str:
     img_shot = ""
     if has_screenshot:
         img_shot = (
@@ -75,6 +89,14 @@ def build_html(corpo: str, has_screenshot: bool = False) -> str:
     if has_screenshot and not shot_inserted:
         paragrafos += img_shot
 
+    pixel_tag = ""
+    if tracking_base and tracking_token:
+        pixel_url = f"{tracking_base}/email/track/open/{tracking_token}"
+        pixel_tag = (
+            f'<img src="{pixel_url}" width="1" height="1" border="0" '
+            f'style="display:none;max-height:1px;min-height:1px;mso-hide:all;" alt="">'
+        )
+
     return f"""<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
@@ -82,6 +104,7 @@ def build_html(corpo: str, has_screenshot: bool = False) -> str:
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
 </head>
 <body style="margin:0;padding:0;background-color:#ffffff;">
+{pixel_tag}
 
   <div style="max-width:640px;margin:0 auto;padding:32px 16px;
               font-family:Arial,Helvetica,sans-serif;">
@@ -208,6 +231,8 @@ def send_email(
     screenshot_path: str | None = None,
     smtp_user: str = "",
     smtp_password: str = "",
+    tracking_base: str = "",
+    tracking_token: str = "",
 ) -> None:
     """
     Monta e envia o e-mail com imagens inline via CID.
@@ -226,7 +251,10 @@ def send_email(
     if shot_resolved and not shot_resolved.exists():
         raise FileNotFoundError(f"Screenshot não encontrado: {shot_resolved}")
 
-    html = build_html(corpo, has_screenshot=shot_resolved is not None)
+    html = build_html(corpo, has_screenshot=shot_resolved is not None,
+                      tracking_base=tracking_base, tracking_token=tracking_token)
+    if tracking_base and tracking_token:
+        html = _rewrite_links(html, tracking_base, tracking_token)
 
     _user = smtp_user or SMTP_USER
     _pwd  = smtp_password or SMTP_PASSWORD
