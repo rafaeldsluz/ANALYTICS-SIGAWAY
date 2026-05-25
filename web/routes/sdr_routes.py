@@ -15,7 +15,7 @@ from flask import (
     request, jsonify, stream_with_context, send_file,
 )
 
-from web.auth     import csrf_protect, login_required
+from web.auth     import admin_required, csrf_protect
 from web.security import audit, rate_limit, sanitize_int, sanitize_str
 from web.sse import sse
 
@@ -46,7 +46,7 @@ def _verify_webhook_hmac(body: bytes, signature: str) -> bool:
 # ── Página principal ──────────────────────────────────────────────────────────
 
 @bp.get("/")
-@login_required
+@admin_required
 def index():
     from sdr.db import init_db, get_stats, get_recent_messages
     init_db()
@@ -68,7 +68,7 @@ def index():
 # ── SSE feed em tempo real ────────────────────────────────────────────────────
 
 @bp.get("/stream")
-@login_required
+@admin_required
 def stream():
     return Response(
         stream_with_context(_sdr_stream()),
@@ -180,7 +180,7 @@ def health():
 # ── API de controle ───────────────────────────────────────────────────────────
 
 @bp.get("/stats")
-@login_required
+@admin_required
 def stats():
     from sdr.db import init_db, get_stats
     init_db()
@@ -188,7 +188,7 @@ def stats():
 
 
 @bp.get("/messages")
-@login_required
+@admin_required
 def messages():
     from sdr.db import init_db, get_recent_messages
     init_db()
@@ -197,7 +197,7 @@ def messages():
 
 
 @bp.post("/check-status")
-@login_required
+@admin_required
 @csrf_protect
 @rate_limit(max_requests=15, window_s=60, scope="sdr_check")
 def check_status():
@@ -219,7 +219,7 @@ def check_status():
 
 
 @bp.post("/toggle")
-@login_required
+@admin_required
 @csrf_protect
 @rate_limit(max_requests=10, window_s=60, scope="sdr_toggle")
 def toggle():
@@ -243,7 +243,7 @@ def toggle():
 
 
 @bp.post("/fetch-errors")
-@login_required
+@admin_required
 @csrf_protect
 @rate_limit(max_requests=10, window_s=60, scope="sdr_fetch_err")
 def fetch_errors():
@@ -278,7 +278,7 @@ def fetch_errors():
 
 
 @bp.get("/export")
-@login_required
+@admin_required
 def export():
     import csv, tempfile
     from sdr.db import init_db, get_recent_messages
@@ -305,7 +305,7 @@ def export():
 
 
 @bp.post("/clear")
-@login_required
+@admin_required
 @csrf_protect
 def clear():
     from sdr.db import clear_all
@@ -315,7 +315,7 @@ def clear():
 
 
 @bp.get("/dashboard")
-@login_required
+@admin_required
 def dashboard():
     from sdr.db import init_db, get_dashboard_data
     init_db()
@@ -324,7 +324,7 @@ def dashboard():
 
 
 @bp.get("/dashboard/data")
-@login_required
+@admin_required
 def dashboard_data():
     from sdr.db import init_db, get_dashboard_data
     init_db()
@@ -333,7 +333,7 @@ def dashboard_data():
 
 
 @bp.get("/flow-info")
-@login_required
+@admin_required
 def flow_info():
     if not _FLOW_PATH.exists():
         return jsonify({"error": "Arquivo de fluxo não encontrado."}), 404
@@ -362,7 +362,7 @@ def flow_info():
 
 
 @bp.post("/import-flow")
-@login_required
+@admin_required
 @csrf_protect
 def import_flow():
     data    = request.json or {}
