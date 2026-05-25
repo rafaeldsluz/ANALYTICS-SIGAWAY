@@ -2,6 +2,25 @@
 {% block page_title %}Gerador de Leads{% endblock %}
 
 {% block content %}
+<style>
+/* Leads table */
+.leads-tbl { width:100%; border-collapse:collapse; font-size:12px; }
+.leads-tbl th { font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:.5px; color:#64748b; padding:8px 10px; border-bottom:1px solid var(--border); text-align:left; white-space:nowrap; }
+.leads-tbl td { padding:9px 10px; border-bottom:1px solid rgba(42,45,58,.4); vertical-align:middle; max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.leads-tbl tr:hover td { background:rgba(255,255,255,.02); }
+.leads-tbl tr:last-child td { border-bottom:none; }
+.score-badge   { display:inline-flex; align-items:center; border-radius:12px; padding:3px 9px; font-size:11px; font-weight:700; }
+.score-frio    { background:rgba(148,163,184,.12); color:#94a3b8; }
+.score-morno   { background:rgba(245,158,11,.12);  color:#f59e0b; }
+.score-quente  { background:rgba(16,185,129,.12);  color:#10b981; }
+.score-premium { background:rgba(139,92,246,.15);  color:#a78bfa; }
+.tbl-pagination { display:flex; gap:6px; justify-content:center; padding:10px 0 2px; flex-wrap:wrap; }
+.pg-btn { background:var(--surface,#1a1d27); border:1px solid var(--border); border-radius:5px; padding:4px 10px; font-size:11px; color:#94a3b8; cursor:pointer; font-family:inherit; }
+.pg-btn:hover    { border-color:#10b981; color:#10b981; }
+.pg-btn.active   { background:#10b981; border-color:#10b981; color:#fff; }
+.ext-link { color:#10b981; text-decoration:none; font-size:11px; }
+.ext-link:hover  { text-decoration:underline; }
+</style>
 <div class="leads-layout">
 
   <!-- ── Source selector ──────────────────────────────────────────────────── -->
@@ -239,6 +258,45 @@
 
   </div><!-- /two-col -->
 
+  <!-- ── Tabela de leads ──────────────────────────────────────────────────── -->
+  <div class="panel" style="margin-top:16px">
+    <div class="console-header" style="margin-bottom:8px">
+      <span class="console-title leads">LEADS NA BASE</span>
+      <div style="display:flex;gap:8px;align-items:center">
+        <select id="tbl-tier-filter" onchange="loadLeadsTable(1)" style="font-size:11px;padding:3px 8px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text)">
+          <option value="">Todos</option>
+          <option value="premium">Premium</option>
+          <option value="quente">Quente</option>
+          <option value="morno">Morno</option>
+          <option value="frio">Frio</option>
+        </select>
+        <button class="btn-ghost small" onclick="loadLeadsTable(currentPage)" style="font-size:11px">Atualizar</button>
+      </div>
+    </div>
+    <div style="overflow-x:auto">
+      <table id="leads-table" class="leads-tbl">
+        <thead>
+          <tr>
+            <th>Score</th>
+            <th>Empresa</th>
+            <th>CNPJ</th>
+            <th>E-mail</th>
+            <th>Tel.</th>
+            <th>Cidade/UF</th>
+            <th>Instagram</th>
+            <th>LinkedIn</th>
+            <th>Site</th>
+            <th>Fonte</th>
+          </tr>
+        </thead>
+        <tbody id="leads-tbody">
+          <tr><td colspan="10" style="text-align:center;color:var(--muted);padding:20px">Clique em "Atualizar" para carregar os leads</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="tbl-pagination" id="tbl-pagination"></div>
+  </div>
+
 </div><!-- /leads-layout -->
 {% endblock %}
 
@@ -406,7 +464,7 @@ function _updateStats(s) {
 function leadsExport(fileFmt) {
   const onlyEmail = document.getElementById('cfg-only-email')?.checked ? '1' : '0';
   const onlyPhone = document.getElementById('cfg-only-phone')?.checked ? '1' : '0';
-  const fmt = (fileFmt === 'csv') ? 'full' : 'emkt';
+  const fmt = fileFmt === 'csv' ? 'full' : fileFmt === 'json' ? 'full' : 'emkt';
   window.location.href =
     `/leads/export?fmt=${fmt}&only_email=${onlyEmail}&only_phone=${onlyPhone}&file=${fileFmt}`;
 }
@@ -447,6 +505,80 @@ function pasteCnae(code) {
 function fillMapsExample(keyword, location) {
   document.getElementById('maps-keyword').value  = keyword;
   document.getElementById('maps-location').value = location;
+}
+
+/* ── Leads table ─────────────────────────────────────────────────────────────── */
+let currentPage = 1;
+
+function loadLeadsTable(page) {
+  currentPage = page;
+  const tier  = document.getElementById('tbl-tier-filter').value;
+  fetch(`/leads/leads-data?page=${page}&per_page=50&tier=${tier}`)
+    .then(r => r.json())
+    .then(data => {
+      renderLeadsTable(data.leads);
+      renderPagination(data.page, data.pages);
+    })
+    .catch(() => showToast('Erro ao carregar leads.', 'error'));
+}
+
+function renderLeadsTable(leads) {
+  const tbody = document.getElementById('leads-tbody');
+  if (!leads || !leads.length) {
+    tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;color:#64748b;padding:24px">Nenhum lead encontrado.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = leads.map(l => {
+    const tier  = l.lead_tier  || 'frio';
+    const score = l.lead_score || 0;
+    const badge = `<span class="score-badge score-${tier}">${score}</span>`;
+    const ig = l.instagram
+      ? `<a class="ext-link" href="https://instagram.com/${l.instagram.replace('@','')}" target="_blank">${_esc(l.instagram)}</a>`
+      : '<span style="color:#374151">—</span>';
+    const li = l.linkedin
+      ? `<a class="ext-link" href="${_esc(l.linkedin)}" target="_blank">LI</a>`
+      : '<span style="color:#374151">—</span>';
+    const ws = l.website
+      ? `<a class="ext-link" href="${_esc(l.website)}" target="_blank">${_esc(l.website.replace(/https?:\/\//,'').slice(0,22))}</a>`
+      : '<span style="color:#374151">—</span>';
+    const nome = _esc((l.razao_social || l.nome_fantasia || '—').slice(0, 38));
+    const cnpj = l.cnpj
+      ? l.cnpj.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, '$1.$2.$3/$4-$5')
+      : '—';
+    const city = [l.municipio, l.uf].filter(Boolean).join('/') || '—';
+    return `<tr>
+      <td>${badge}</td>
+      <td title="${_esc(l.razao_social || '')}">${nome}</td>
+      <td style="font-size:11px;color:#64748b">${cnpj}</td>
+      <td>${_esc(l.email  || '—')}</td>
+      <td>${_esc(l.telefone || '—')}</td>
+      <td>${_esc(city)}</td>
+      <td>${ig}</td>
+      <td>${li}</td>
+      <td>${ws}</td>
+      <td style="font-size:10px;color:#64748b">${_esc(l.source_type || l.fonte || '—')}</td>
+    </tr>`;
+  }).join('');
+}
+
+function renderPagination(page, pages) {
+  const el = document.getElementById('tbl-pagination');
+  if (pages <= 1) { el.innerHTML = ''; return; }
+  const start = Math.max(1, page - 2);
+  const end   = Math.min(pages, page + 2);
+  let html = '';
+  if (start > 1) html += `<button class="pg-btn" onclick="loadLeadsTable(1)">1</button>`;
+  if (start > 2) html += `<span style="color:#64748b;padding:0 2px">…</span>`;
+  for (let i = start; i <= end; i++) {
+    html += `<button class="pg-btn${i===page?' active':''}" onclick="loadLeadsTable(${i})">${i}</button>`;
+  }
+  if (end < pages - 1) html += `<span style="color:#64748b;padding:0 2px">…</span>`;
+  if (end < pages) html += `<button class="pg-btn" onclick="loadLeadsTable(${pages})">${pages}</button>`;
+  el.innerHTML = html;
+}
+
+function _esc(s) {
+  return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 </script>
 {% endblock %}

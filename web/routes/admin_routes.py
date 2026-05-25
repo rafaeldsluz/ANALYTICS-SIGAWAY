@@ -8,7 +8,7 @@ from flask import Blueprint, jsonify, redirect, render_template, request, sessio
 from web.auth     import admin_required, csrf_protect
 from web.security import audit, rate_limit
 from web.users_db import (
-    approve_user, delete_user, get_all, get_by_id,
+    approve_user, create_invited_user, delete_user, get_all, get_by_id,
     get_stats, promote_user, reject_user,
 )
 
@@ -84,6 +84,43 @@ def remove(uid: int):
     audit("WARNING", "USER_DELETED",
           f"id={uid} username={user['username']} by={actor}")
     return jsonify({"ok": ok})
+
+
+@bp.post("/users/invite")
+@admin_required
+@csrf_protect
+@rate_limit(max_requests=10, window_s=60, scope="admin_invite")
+def invite():
+    from web.auth import send_invite_email
+    from web.security import sanitize_email, sanitize_str
+
+    data     = request.json or {}
+    username = sanitize_str((data.get("username") or "").strip(), max_len=30)
+    email    = sanitize_email((data.get("email") or "").strip())
+    actor    = session.get("user", "admin")
+
+    if not username or len(username) < 3:
+        return jsonify({"error": "Nome de usuário deve ter pelo menos 3 caracteres."}), 400
+    if not email:
+        return jsonify({"error": "E-mail inválido."}), 400
+
+    result = create_invited_user(username, email)
+    if not result.get("ok"):
+        return jsonify({"error": result.get("error", "Erro ao criar usuário.")}), 400
+
+    base_url   = request.host_url.rstrip("/")
+    invite_url = f"{base_url}/set-password/{result['token']}"
+    sent = send_invite_email(email, username, invite_url)
+
+    audit("INFO", "USER_INVITED",
+          f"username={username} email={email} sent={sent} by={actor}")
+    _log.info("Usuário %s convidado por %s (email enviado: %s)", username, actor, sent)
+
+    msg = "Convite enviado com sucesso!" if sent else (
+        "Usuário criado, mas o e-mail não foi enviado (verifique SMTP). "
+        f"Link de convite: {invite_url}"
+    )
+    return jsonify({"ok": True, "sent": sent, "msg": msg})
 
 
 @bp.post("/users/<int:uid>/promote")

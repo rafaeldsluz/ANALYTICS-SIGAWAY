@@ -47,7 +47,8 @@ def create_app() -> Flask:
     app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
     app.config["SESSION_COOKIE_SECURE"]   = os.getenv("HTTPS_ONLY", "0") == "1"
     app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(hours=8)
-    app.config["MAX_CONTENT_LENGTH"] = 10 * 1024 * 1024  # 10 MB
+    app.config["MAX_CONTENT_LENGTH"]    = 10 * 1024 * 1024  # 10 MB
+    app.config["TEMPLATES_AUTO_RELOAD"] = True
 
     # Aviso se APP_PASSWORD não configurado
     if not os.getenv("APP_PASSWORD"):

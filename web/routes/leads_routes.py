@@ -19,8 +19,9 @@ from web.sse import sse
 _log = logging.getLogger("sigaway.leads")
 bp   = Blueprint("leads", __name__)
 
-_extraction: dict = {"stop": None, "thread": None}
-_maps_job:   dict = {"stop": None, "thread": None}
+_extraction:   dict = {"stop": None, "thread": None}
+_maps_job:     dict = {"stop": None, "thread": None}
+_pipeline_job: dict = {"stop": None, "thread": None}
 
 
 @bp.get("/")
@@ -121,6 +122,72 @@ def maps_stream(stream_id):
     )
 
 
+# ── Pipeline enrichment ───────────────────────────────────────────────────────
+
+@bp.post("/pipeline/start")
+@login_required
+@csrf_protect
+@rate_limit(max_requests=3, window_s=60, scope="pipeline_start")
+def pipeline_start():
+    global _pipeline_job
+    if _pipeline_job["thread"] and _pipeline_job["thread"].is_alive():
+        return jsonify({"error": "Pipeline já em andamento."}), 409
+
+    data      = request.json or {}
+    stream_id = str(uuid.uuid4())
+    stop      = threading.Event()
+    _pipeline_job = {"stop": stop, "thread": None}
+
+    modules = {
+        "instagram": bool(data.get("instagram")),
+        "linkedin":  bool(data.get("linkedin")),
+        "score":     bool(data.get("score", True)),
+    }
+    tier     = sanitize_str(data.get("tier", ""), max_len=20)
+    campanha = sanitize_str(data.get("campanha", ""), max_len=100)
+
+    audit("INFO", "PIPELINE_START", f"modules={modules} tier={tier or 'all'} ip={request.remote_addr}")
+
+    t = threading.Thread(
+        target=_run_pipeline,
+        args=(modules, tier, campanha, stream_id, stop),
+        daemon=True,
+    )
+    _pipeline_job["thread"] = t
+    t.start()
+    return jsonify({"stream_id": stream_id})
+
+
+@bp.post("/pipeline/stop")
+@login_required
+@csrf_protect
+def pipeline_stop():
+    if _pipeline_job.get("stop"):
+        _pipeline_job["stop"].set()
+    return jsonify({"ok": True})
+
+
+@bp.get("/pipeline/stream/<stream_id>")
+@login_required
+def pipeline_stream(stream_id):
+    return Response(
+        stream_with_context(sse.listen(stream_id)),
+        mimetype="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@bp.get("/leads-data")
+@login_required
+def leads_data():
+    from leads.db import init_db, get_leads_page
+    init_db()
+    page     = int(request.args.get("page", 1))
+    per_page = min(int(request.args.get("per_page", 50)), 200)
+    tier     = request.args.get("tier", "")
+    return jsonify(get_leads_page(page, per_page, tier))
+
+
 # ── Shared endpoints ───────────────────────────────────────────────────────────
 
 @bp.get("/stats")
@@ -156,6 +223,16 @@ def export():
     only_email = request.args.get("only_email") == "1"
     only_phone = request.args.get("only_phone") == "1"
     file_fmt   = request.args.get("file", "xlsx")
+
+    if file_fmt == "json":
+        import json as _json
+        result = [dict(r) for r in leads]
+        import tempfile
+        fd, tmp = tempfile.mkstemp(suffix=".json", prefix="leads_export_")
+        os.close(fd)
+        with open(tmp, "w", encoding="utf-8") as f:
+            _json.dump(result, f, ensure_ascii=False, indent=2)
+        return send_file(tmp, as_attachment=True, download_name="leads_export.json")
 
     df = pd.DataFrame(leads)
     df["email"]    = df["email"].fillna("").astype(str)
@@ -371,6 +448,25 @@ def _run_maps(cfg: dict, stream_id: str, stop):
         _log(f"Erro no Maps: {e}", "ERROR")
     finally:
         sse.push(stream_id, "done", {})
+
+
+def _run_pipeline(modules: dict, tier: str, campanha: str, stream_id: str, stop):
+    from leads.db import init_db, get_all_leads
+    from pipeline.orchestrator import run_pipeline
+
+    init_db()
+    if tier:
+        leads = [r for r in get_all_leads() if r.get("lead_tier") == tier]
+    else:
+        leads = get_all_leads()
+
+    cnpjs = [r["cnpj"] for r in leads if r.get("cnpj")]
+    if not cnpjs:
+        sse.push(stream_id, "log", {"msg": "Nenhum lead na base para enriquecer.", "level": "WARN"})
+        sse.push(stream_id, "done", {})
+        return
+
+    run_pipeline(cnpjs, modules, stream_id, stop, campanha)
 
 
 def _fallback(company: dict, cnae: str) -> dict:

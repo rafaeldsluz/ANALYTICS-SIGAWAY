@@ -75,6 +75,38 @@ def create_user(username: str, email: str, password: str) -> dict:
         return {"error": "Dados já existentes."}
 
 
+def create_invited_user(username: str, email: str) -> dict:
+    """
+    Cria usuário convidado pelo admin (status='invited', sem senha definida).
+    Retorna {'ok': True, 'user_id': int, 'token': str} ou {'error': str}.
+    """
+    import secrets
+    from datetime import datetime, timedelta
+
+    placeholder = generate_password_hash(secrets.token_hex(32), method="pbkdf2:sha256")
+    try:
+        with _LOCK:
+            with _conn() as c:
+                c.execute(
+                    "INSERT INTO users (username, email, password_hash, status) VALUES (?,?,?,?)",
+                    (username.strip(), email.strip().lower(), placeholder, "invited"),
+                )
+                user_id = c.lastrowid
+                c.commit()
+    except sqlite3.IntegrityError as e:
+        err = str(e).lower()
+        if "username" in err:
+            return {"error": "Nome de usuário já cadastrado."}
+        if "email" in err:
+            return {"error": "E-mail já cadastrado."}
+        return {"error": "Dados já existentes."}
+
+    token  = secrets.token_urlsafe(32)
+    expiry = (datetime.utcnow() + timedelta(days=7)).strftime("%Y-%m-%d %H:%M:%S")
+    set_reset_token(user_id, token, expiry)
+    return {"ok": True, "user_id": user_id, "token": token}
+
+
 # ── Consultas ─────────────────────────────────────────────────────────────────
 
 def get_by_username(username: str) -> dict | None:

@@ -41,7 +41,7 @@ SESSION_TIMEOUT_S = 8 * 3600
 CSRF_SESSION_KEY  = "_csrf_token"
 CSRF_HEADER       = "X-CSRF-Token"
 
-_PUBLIC_PATHS = ("/login", "/logout", "/register", "/forgot-password", "/reset-password", "/email/track/", "/sdr/health")
+_PUBLIC_PATHS = ("/login", "/logout", "/register", "/forgot-password", "/reset-password", "/set-password", "/email/track/", "/sdr/health")
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -410,3 +410,99 @@ def reset_password_post(token: str):
     clear_reset_token(user["id"])
     audit("INFO", "PASSWORD_RESET_OK", f"user={user['username']}")
     return render_template("reset_password.html", token=None, error=None, success=True)
+
+
+# ── Definição de senha por convite ────────────────────────────────────────────
+
+@bp.get("/set-password/<token>")
+def set_password(token: str):
+    if session.get("authenticated"):
+        return redirect("/email")
+    from web.users_db import get_by_reset_token
+    user = get_by_reset_token(token)
+    if not user or not user.get("reset_expiry") or user.get("status") != "invited":
+        return render_template("set_password.html", token=None, error="Convite inválido ou expirado.", success=False, username="")
+    if datetime.utcnow() > datetime.strptime(user["reset_expiry"], "%Y-%m-%d %H:%M:%S"):
+        return render_template("set_password.html", token=None, error="Este convite expirou. Solicite um novo ao administrador.", success=False, username="")
+    return render_template("set_password.html", token=token, error=None, success=False, username=user["username"])
+
+
+@bp.post("/set-password/<token>")
+def set_password_post(token: str):
+    from web.security import audit
+    from web.users_db import approve_user, clear_reset_token, get_by_reset_token, update_password
+
+    user = get_by_reset_token(token)
+    if not user or not user.get("reset_expiry") or user.get("status") != "invited":
+        return render_template("set_password.html", token=None, error="Convite inválido ou expirado.", success=False, username="")
+    if datetime.utcnow() > datetime.strptime(user["reset_expiry"], "%Y-%m-%d %H:%M:%S"):
+        return render_template("set_password.html", token=None, error="Este convite expirou. Solicite um novo ao administrador.", success=False, username="")
+
+    password = request.form.get("password", "")
+    confirm  = request.form.get("confirm", "")
+
+    if len(password) < 8:
+        return render_template("set_password.html", token=token, error="A senha deve ter pelo menos 8 caracteres.", success=False, username=user["username"])
+    if password != confirm:
+        return render_template("set_password.html", token=token, error="As senhas não coincidem.", success=False, username=user["username"])
+
+    update_password(user["id"], password)
+    approve_user(user["id"], "invite")
+    clear_reset_token(user["id"])
+    audit("INFO", "INVITE_SET_PASSWORD", f"user={user['username']}")
+    return render_template("set_password.html", token=None, error=None, success=True, username=user["username"])
+
+
+def send_invite_email(to_email: str, username: str, invite_url: str) -> bool:
+    host = os.getenv("SMTP_HOST", "smtp.office365.com")
+    port = int(os.getenv("SMTP_PORT", "587"))
+    user = os.getenv("SMTP_USER", "")
+    pwd  = os.getenv("SMTP_PASS", "")
+    if not user or not pwd:
+        _log.warning("SMTP não configurado — e-mail de convite não enviado.")
+        return False
+
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = "Convite — Sigaway Analytics"
+    msg["From"]    = user
+    msg["To"]      = to_email
+
+    html = f"""
+    <div style="font-family:Inter,sans-serif;background:#0f1117;padding:32px;max-width:480px;margin:0 auto;border-radius:12px;">
+      <div style="text-align:center;margin-bottom:24px;">
+        <h2 style="color:#f1f5f9;font-size:18px;margin:0;">Sigaway Analytics</h2>
+        <p style="color:#64748b;font-size:13px;margin:4px 0 0;">Você foi convidado</p>
+      </div>
+      <div style="background:#1a1d27;border:1px solid #2a2d3a;border-radius:10px;padding:24px;">
+        <p style="color:#94a3b8;font-size:14px;line-height:1.6;margin:0 0 8px;">
+          Olá, <strong style="color:#f1f5f9;">{username}</strong>!
+        </p>
+        <p style="color:#94a3b8;font-size:14px;line-height:1.6;margin:0 0 20px;">
+          Você foi convidado para acessar a plataforma Sigaway Analytics.<br>
+          Clique no botão abaixo para definir sua senha e ativar o acesso.
+        </p>
+        <div style="text-align:center;margin-bottom:20px;">
+          <a href="{invite_url}" style="display:inline-block;background:#10b981;color:#fff;text-decoration:none;border-radius:8px;padding:12px 28px;font-size:14px;font-weight:600;">
+            Definir minha senha
+          </a>
+        </div>
+        <p style="color:#64748b;font-size:12px;margin:0;text-align:center;">
+          Este link expira em <strong style="color:#94a3b8;">7 dias</strong>.<br>
+          Se você não esperava este convite, ignore este e-mail.
+        </p>
+      </div>
+    </div>
+    """
+    msg.attach(MIMEText(html, "html"))
+
+    try:
+        ctx = ssl.create_default_context()
+        with smtplib.SMTP(host, port, timeout=10) as s:
+            s.ehlo()
+            s.starttls(context=ctx)
+            s.login(user, pwd)
+            s.sendmail(user, to_email, msg.as_string())
+        return True
+    except Exception as exc:
+        _log.error("Falha ao enviar e-mail de convite: %s", exc)
+        return False

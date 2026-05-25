@@ -55,6 +55,21 @@
   .section-header { padding:14px 16px; border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between; }
   .section-header h3 { font-size:13px; font-weight:600; color:var(--text-1); }
   .count-chip { background:var(--bg); border:1px solid var(--border); border-radius:20px; padding:2px 10px; font-size:11px; font-weight:600; color:var(--text-2); }
+
+  /* Invite modal */
+  .modal-overlay { position:fixed; inset:0; background:rgba(0,0,0,.6); z-index:1000; display:flex; align-items:center; justify-content:center; opacity:0; pointer-events:none; transition:opacity .2s; }
+  .modal-overlay.open { opacity:1; pointer-events:all; }
+  .modal-box { background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:28px 24px; width:100%; max-width:400px; }
+  .modal-box h3 { font-size:15px; font-weight:700; margin-bottom:20px; }
+  .modal-field { margin-bottom:14px; }
+  .modal-field label { display:block; font-size:11px; font-weight:600; color:var(--text-2); text-transform:uppercase; letter-spacing:.5px; margin-bottom:5px; }
+  .modal-field input { width:100%; background:var(--bg); border:1px solid var(--border); border-radius:7px; padding:9px 11px; font-size:13px; color:var(--text-1); font-family:inherit; outline:none; transition:border-color .15s; }
+  .modal-field input:focus { border-color:#10b981; }
+  .modal-actions { display:flex; gap:10px; margin-top:20px; }
+  .btn-invite { flex:1; background:#10b981; color:#fff; border:none; border-radius:7px; padding:10px; font-size:13px; font-weight:600; font-family:inherit; cursor:pointer; transition:background .15s; }
+  .btn-invite:hover { background:#059669; }
+  .btn-cancel { flex:1; background:transparent; color:var(--text-2); border:1px solid var(--border); border-radius:7px; padding:10px; font-size:13px; font-weight:600; font-family:inherit; cursor:pointer; }
+  .badge.invited { background:rgba(139,92,246,.15); color:#a78bfa; }
 </style>
 
 <!-- KPIs -->
@@ -77,12 +92,18 @@
   </div>
 </div>
 
-<!-- Filtros -->
-<div class="filter-bar">
-  <button class="filter-btn active" data-status="">Todos</button>
-  <button class="filter-btn" data-status="pending">Pendentes</button>
-  <button class="filter-btn" data-status="approved">Aprovados</button>
-  <button class="filter-btn" data-status="rejected">Recusados</button>
+<!-- Barra de ações + filtros -->
+<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:16px;">
+  <div class="filter-bar" style="margin-bottom:0">
+    <button class="filter-btn active" data-status="">Todos</button>
+    <button class="filter-btn" data-status="invited">Convidados</button>
+    <button class="filter-btn" data-status="pending">Pendentes</button>
+    <button class="filter-btn" data-status="approved">Aprovados</button>
+    <button class="filter-btn" data-status="rejected">Recusados</button>
+  </div>
+  <button class="btn-sm btn-approve" style="padding:7px 16px;font-size:12px;" onclick="openInviteModal()">
+    + Criar Usuário
+  </button>
 </div>
 
 <!-- Tabela -->
@@ -143,6 +164,29 @@
 <!-- Toast -->
 <div id="toast" class="toast">
   <span id="toast-msg"></span>
+</div>
+
+<!-- Modal: Criar Usuário por Convite -->
+<div class="modal-overlay" id="invite-modal" onclick="closeInviteModal(event)">
+  <div class="modal-box">
+    <h3>Criar Usuário por Convite</h3>
+    <div id="invite-error" style="display:none;background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.3);color:#fca5a5;border-radius:7px;padding:9px 12px;font-size:13px;margin-bottom:14px;"></div>
+    <div class="modal-field">
+      <label>Nome de usuário</label>
+      <input type="text" id="inv-username" placeholder="ex: joao.silva" autocomplete="off">
+    </div>
+    <div class="modal-field">
+      <label>E-mail</label>
+      <input type="email" id="inv-email" placeholder="ex: joao@empresa.com">
+    </div>
+    <p style="font-size:12px;color:var(--text-3);margin-top:4px;">
+      Um e-mail será enviado com o link para o usuário definir a própria senha.
+    </p>
+    <div class="modal-actions">
+      <button class="btn-cancel" onclick="closeInviteModal()">Cancelar</button>
+      <button class="btn-invite" id="btn-invite-submit" onclick="submitInvite()">Enviar Convite</button>
+    </div>
+  </div>
 </div>
 
 {% endblock %}
@@ -227,6 +271,53 @@ function updateCount() {
   const visible = document.querySelectorAll('#users-tbody tr[data-status]').length;
   document.getElementById('count-chip').textContent = visible;
 }
+
+function openInviteModal() {
+  document.getElementById('inv-username').value = '';
+  document.getElementById('inv-email').value = '';
+  document.getElementById('invite-error').style.display = 'none';
+  document.getElementById('invite-modal').classList.add('open');
+  setTimeout(() => document.getElementById('inv-username').focus(), 100);
+}
+
+function closeInviteModal(e) {
+  if (e && e.target !== document.getElementById('invite-modal')) return;
+  document.getElementById('invite-modal').classList.remove('open');
+}
+
+async function submitInvite() {
+  const username = document.getElementById('inv-username').value.trim();
+  const email    = document.getElementById('inv-email').value.trim();
+  const errEl    = document.getElementById('invite-error');
+
+  if (!username || !email) {
+    errEl.textContent = 'Preencha o nome de usuário e o e-mail.';
+    errEl.style.display = '';
+    return;
+  }
+
+  const btn = document.getElementById('btn-invite-submit');
+  btn.disabled = true;
+  btn.textContent = 'Enviando...';
+
+  const data = await post('/admin/users/invite', { username, email });
+  btn.disabled = false;
+  btn.textContent = 'Enviar Convite';
+
+  if (data.ok) {
+    document.getElementById('invite-modal').classList.remove('open');
+    toast(data.msg || 'Convite enviado!');
+    setTimeout(() => location.reload(), 1500);
+  } else {
+    errEl.textContent = data.error || 'Erro ao criar usuário.';
+    errEl.style.display = '';
+  }
+}
+
+// Fechar modal com ESC
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') document.getElementById('invite-modal').classList.remove('open');
+});
 
 // Filtros
 document.querySelectorAll('.filter-btn').forEach(btn => {
